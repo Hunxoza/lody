@@ -91,6 +91,7 @@ function render() {
     ? `Audio plays through ${state.player}.`
     : "No audio player found: install mpv or ffmpeg to hear replies.";
   $("display").checked = s.display.enabled;
+  $("overlay").checked = s.display.overlay;
 }
 
 // --- Programs Lody reads from: one switch each (sources::PROGRAMS) ---
@@ -214,7 +215,10 @@ function replyCard(r) {
     button("▶ Read again", () => invoke("read_again", { id: r.id }).catch((e) => toast(String(e), true)), "secondary"),
     button("Copy", () => navigator.clipboard.writeText(shown).then(() => toast("Copied")), "secondary"),
   );
-  const meta = el("span", { className: "meta" }, el("b", { textContent: r.project || "reply" }), ` · ${when}`);
+  const o = r.origin || {};
+  const project = o.project && o.branch ? `${o.project} (${o.branch})` : o.project;
+  const from = [o.program, o.runs_in].filter(Boolean).join(" · ");
+  const meta = el("span", { className: "meta" }, el("b", { textContent: project || "reply" }), `${from ? " · " + from : ""} · ${when}${o.title ? " · " + o.title : ""}`);
   return el("article", { className: "reply" }, el("header", {}, meta, tools), text, original);
 }
 
@@ -231,6 +235,7 @@ function formSettings() {
   s.locale = locale.code;
   s.translate = $("translate").checked;
   s.display.enabled = $("display").checked;
+  s.display.overlay = $("overlay").checked;
   s.timeout = Math.max(2, parseInt($("timeout").value, 10) || 8);
   s.translator = $("translator").value;
   document.querySelectorAll("[data-source]").forEach((i) => (s.sources[i.dataset.source] = i.checked));
@@ -268,7 +273,7 @@ async function save() {
   }
 }
 
-["locale", "translate", "display", "timeout", "translator", "speech-enabled", "scope", "voice", "announce", "progress", "progress-every", "max-chars", "wait-handy", "mute-others", "voice-command", "voice-openai-url", "voice-openai-model", "voice-openai-voice", "voice-openai-key"].forEach(
+["locale", "translate", "display", "overlay", "timeout", "translator", "speech-enabled", "scope", "voice", "announce", "progress", "progress-every", "max-chars", "wait-handy", "mute-others", "voice-command", "voice-openai-url", "voice-openai-model", "voice-openai-voice", "voice-openai-key"].forEach(
   (id) => $(id).addEventListener("change", save),
 );
 $("voice").addEventListener("input", () => renderVoiceNote(currentLocale()));
@@ -443,6 +448,11 @@ window.addEventListener("focus", () => {
 listen("reply", ({ payload }) => showReply(payload));
 listen("paused", ({ payload }) => {
   state.paused = payload;
+  render();
+});
+// Turned on or off from the tray or the overlay's own button.
+listen("overlay", ({ payload }) => {
+  state.settings.display.overlay = payload;
   render();
 });
 

@@ -10,7 +10,7 @@ use crate::locale::Locale;
 use crate::progress::{self, Detail, Steps};
 use crate::reply;
 use crate::settings::{Announce, Progress, Settings};
-use crate::sources::{Event, PROGRAMS, Source};
+use crate::sources::{About, Event, PROGRAMS, Source};
 use crate::speaker::{Job, Speaker};
 use crate::translate::Translator;
 
@@ -20,10 +20,22 @@ const ACTIVE_FOR: Duration = Duration::from_secs(10 * 60);
 /// Told about each reply once it is translated, whether or not it is read aloud.
 pub type OnReply = Arc<dyn Fn(&Reply) + Send + Sync>;
 
+/// Where a reply comes from, shown with it: "Claude Code · terminal · shop (main)", and the
+/// conversation's title.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Origin {
+    /// The program's name, from `sources::PROGRAMS`.
+    pub program: String,
+    pub project: String,
+    pub session: String,
+    #[serde(flatten)]
+    pub about: About,
+}
+
 /// A reply as Lody shows it: the original, its translation, and what is (or would be) read.
 #[derive(Debug, Clone)]
 pub struct Reply {
-    pub project: String,
+    pub origin: Origin,
     pub original: String,
     /// The whole reply in your language, code kept in place (empty with `display.enabled` off
     /// or when it was not translated).
@@ -103,9 +115,13 @@ impl Engine {
             self.settings.speech.wait_for_handy && self.speaker.busy() && crate::handy::recording();
         self.speaker.set_held(hold);
         self.speaker.set_mute_others(self.settings.speech.mute_others);
-        let events: Vec<Event> = self.sources.values_mut().flat_map(|s| s.poll()).collect();
-        for event in events {
-            self.handle(event);
+        let events: Vec<(&'static str, Event)> = self
+            .sources
+            .iter_mut()
+            .flat_map(|(id, source)| source.poll().into_iter().map(move |e| (*id, e)))
+            .collect();
+        for (program, event) in events {
+            self.handle_from(program, event);
         }
         self.say_steps();
     }
@@ -117,7 +133,13 @@ impl Engine {
         }
     }
 
+    /// Act on an event, as if from an unnamed program (what tests and `lody say` need).
     pub fn handle(&mut self, event: Event) {
+        self.handle_from("", event);
+    }
+
+    /// Act on an event from the program `program` (its id in `PROGRAMS`).
+    fn handle_from(&mut self, program: &str, event: Event) {
         match event {
             Event::Prompt { session } => {
                 self.last_seen.insert(session.clone(), Instant::now());
@@ -134,11 +156,23 @@ impl Engine {
                     (self.settings.clone(), self.locale.clone(), self.translator.clone());
                 let (speaker, generation) = (self.speaker.clone(), self.generation.clone());
                 let on_reply = self.on_reply.clone();
+                let origin = Origin {
+                    program: PROGRAMS
+                        .iter()
+                        .find(|p| p.id == program)
+                        .map(|p| p.name.to_string())
+                        .unwrap_or_default(),
+                    project: project.clone(),
+                    session: session.clone(),
+                    about: self.sources.get(program).map(|s| s.about(&session)).unwrap_or_default(),
+                };
                 let started = generation.lock().unwrap().get(&session).copied().unwrap_or(0);
                 // Translating takes a network round trip: off the watching thread.
                 std::thread::spawn(move || {
                     let out = reply::process(&text, &settings, &locale, translator.as_ref());
-                    if out.chunks.is_empty() && out.display.is_empty() {
+                    // Nothing to read and no translation (speech off, translator down): still
+                    // shown, as written, in the Read tab and the overlay.
+                    if text.trim().is_empty() {
                         return;
                     }
                     let mut chunks = out.chunks;
@@ -154,7 +188,7 @@ impl Engine {
                     };
                     if let Some(f) = on_reply {
                         f(&Reply {
-                            project: project.clone(),
+                            origin,
                             original: text,
                             display: out.display,
                             translated: out.translated,

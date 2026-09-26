@@ -25,6 +25,23 @@ pub trait Source: Send {
     /// Everything that happened since the last call. Started fresh, a source reports only what
     /// happens from then on, never what was said before Lody started.
     fn poll(&mut self) -> Vec<Event>;
+
+    /// What the program says about a session, shown with its replies so you can tell where
+    /// each comes from; empty where it says nothing.
+    fn about(&self, _session: &str) -> About {
+        About::default()
+    }
+}
+
+/// Where a session runs, as far as its program tells: "terminal · main · Fix the tests".
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct About {
+    /// Where the program runs: "terminal", "VS Code".
+    pub runs_in: String,
+    /// The git branch the project is on.
+    pub branch: String,
+    /// The conversation's title, as the program names it.
+    pub title: String,
 }
 
 /// A program Lody can read from.

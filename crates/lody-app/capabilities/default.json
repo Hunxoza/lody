@@ -1,7 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What Lody's own window may do",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "What Lody's own windows may do; the overlay is moved and resized from its page",
+  "windows": ["main", "overlay"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging"
+  ]
 }
