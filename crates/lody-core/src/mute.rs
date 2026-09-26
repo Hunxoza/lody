@@ -10,6 +10,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use windows::Win32::Foundation::S_OK;
@@ -35,8 +36,9 @@ static MUTED: Mutex<Vec<Muted>> = Mutex::new(Vec::new());
 /// Sounds already muted when Lody muted the rest: muted by you, so never unmuted by Lody,
 /// even when another sound of the same program was Lody's.
 static YOURS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
-/// Muted by an earlier run that stopped first, and not found since: a program has its sound
-/// only while it plays, and Windows brings it back muted when it plays again.
+/// Muted by Lody but not found to unmute: an earlier run stopped first, or it closed while
+/// Lody spoke. A program has its sound only while it plays, and Windows brings it back muted
+/// when it plays again.
 static LEFT: Mutex<Vec<Muted>> = Mutex::new(Vec::new());
 
 /// Look for the programs left muted this often, until all are found.
@@ -71,30 +73,44 @@ fn ids(muted: &[Muted]) -> HashSet<String> {
 }
 
 /// Mute (true) the other programs that are not muted, or unmute (false) the ones Lody muted.
+/// One closed while Lody spoke can't be unmuted now, and Windows brings it back muted when it
+/// opens again: it is looked for until it plays (see `look_for_left`).
 pub fn others(mute: bool) {
     let mut muted = MUTED.lock().unwrap();
     if mute == !muted.is_empty() {
         return;
     }
-    let result = if mute {
-        on_com_thread(mute_all).map(|(found, yours)| {
-            *muted = found;
-            *YOURS.lock().unwrap() = Some(yours);
-        })
+    if mute {
+        match on_com_thread(mute_all) {
+            Ok((found, yours)) => {
+                *muted = found;
+                *YOURS.lock().unwrap() = Some(yours);
+            }
+            Err(e) => log::warn!("could not mute the other programs: {e}"),
+        }
     } else {
         let ids = ids(&muted);
         let yours = YOURS.lock().unwrap().take().unwrap_or_default();
-        muted.clear();
-        on_com_thread(move || unmute(&ids, &yours).map(|_| ()))
-    };
-    if let Err(e) = result {
-        log::warn!("could not {} the other programs: {e}", if mute { "mute" } else { "unmute" });
+        let taken = std::mem::take(&mut *muted);
+        let gone: Vec<Muted> = match on_com_thread(move || unmute(&ids, &yours)) {
+            Ok(found) => taken
+                .into_iter()
+                .filter(|m| !found.contains(&m.sound) && !found.contains(&m.program))
+                .collect(),
+            Err(e) => {
+                log::warn!("could not unmute the other programs: {e}");
+                taken
+            }
+        };
+        if !gone.is_empty() {
+            LEFT.lock().unwrap().extend(gone);
+            look_for_left();
+        }
     }
     write_down(&muted);
 }
 
 /// Unmute what an earlier run muted and did not get to unmute (it stopped while speaking).
-/// A program not playing now is looked for again every few seconds, and unmuted when it is.
 pub fn recover() {
     let Ok(text) = std::fs::read_to_string(record()) else { return };
     // Older runs wrote only the sound's id.
@@ -106,22 +122,36 @@ pub fn recover() {
             Muted { sound: sound.to_string(), program: program.to_string() }
         })
         .collect();
-    *LEFT.lock().unwrap() = left;
+    LEFT.lock().unwrap().extend(left);
+    look_for_left();
+}
+
+/// Whether a thread is looking for the programs left muted.
+static LOOKING: AtomicBool = AtomicBool::new(false);
+
+/// Look for the programs left muted every few seconds, on one thread, and unmute each the
+/// first time it plays again; after that it is off the list, so muting it yourself is kept.
+fn look_for_left() {
+    if LOOKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     std::thread::spawn(|| {
         loop {
             let wanted = ids(&LEFT.lock().unwrap());
-            // The first time one is seen again it is still the mute Lody left; after that it
-            // is off the list, so muting it yourself later is kept.
             match on_com_thread(move || unmute(&wanted, &HashSet::new())) {
                 Ok(found) => LEFT
                     .lock()
                     .unwrap()
                     .retain(|m| !found.contains(&m.sound) && !found.contains(&m.program)),
-                Err(e) => log::warn!("could not unmute the programs muted last time: {e}"),
+                Err(e) => log::warn!("could not unmute the programs left muted: {e}"),
             }
             write_down(&MUTED.lock().unwrap());
             if LEFT.lock().unwrap().is_empty() {
-                break;
+                LOOKING.store(false, Ordering::SeqCst);
+                // One may have been added meanwhile: look again unless another thread does.
+                if LEFT.lock().unwrap().is_empty() || LOOKING.swap(true, Ordering::SeqCst) {
+                    break;
+                }
             }
             std::thread::sleep(LOOK_AGAIN);
         }
@@ -318,5 +348,27 @@ mod tests {
         })
         .unwrap();
         assert_eq!(still, yours.len(), "Lody unmuted what you had muted");
+    }
+
+    /// A program Lody muted closes while it speaks: when Lody is done it can't be found, and
+    /// stays on the list to unmute when it plays again, while those still open are unmuted.
+    #[test]
+    #[ignore]
+    fn a_program_closed_while_lody_spoke_is_kept_to_unmute_later() {
+        if std::env::var_os("LODY_TEST_MUTE").is_none() {
+            return;
+        }
+        super::others(true);
+        let open = super::MUTED.lock().unwrap().len();
+        assert!(open > 0, "play something first");
+        let closed =
+            super::Muted { sound: "closed-sound".into(), program: "closed-program".into() };
+        super::MUTED.lock().unwrap().push(closed);
+
+        super::others(false);
+        let left: Vec<String> =
+            super::LEFT.lock().unwrap().iter().map(|m| m.sound.clone()).collect();
+        super::LEFT.lock().unwrap().clear();
+        assert_eq!(left, ["closed-sound"], "only the closed one is kept");
     }
 }
