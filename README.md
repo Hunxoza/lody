@@ -70,8 +70,9 @@ cargo tauri build --bundles nsis,msi                # -> target/release/bundle/{
 ```
 
 Or let GitHub build them: **Actions → Build → Run workflow** builds Windows, macOS and Linux
-side by side, and pushing a tag (`git tag v0.1.8 && git push origin v0.1.8`) puts them in a
-draft release. This works in a fork too, once Actions is turned on in the fork's Actions tab.
+side by side. A release merged into `main` is built and published by itself (see
+[Releasing](CONTRIBUTING.md#releasing-maintainer)). This works in a fork too, once Actions is
+turned on in the fork's Actions tab.
 
 ### Debug build
 
@@ -154,8 +155,9 @@ cargo test -- --ignored     # also talks to Microsoft's voice servers and Huggin
 
 ## Contributing
 
-Fork the repository, make your change, and open a pull request. [CONTRIBUTING.md](CONTRIBUTING.md)
-shows how to add a program for Lody to read, a language, a voice or a translator.
+Fork the repository, make your change on a `feat/…` or `fix/…` branch, and open a pull request
+into `staging`. [CONTRIBUTING.md](CONTRIBUTING.md) shows how, and how to add a program for Lody
+to read, a language, a voice or a translator.
 
 ## License
 

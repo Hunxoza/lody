@@ -82,15 +82,30 @@ cargo test
 
 ## How a change gets in
 
-1. Open a pull request from your fork against `main`; the template asks what it changes and
+```
+your fork: feat/codex ──pull request──▶ staging ──release──▶ main ──▶ installers + website
+```
+
+1. **Fork** Lody, and in your fork make a branch named for what it does: `feat/…` for
+   something new, `fix/…`, `docs/…` or `chore/…` (`feat/codex-cli`, `fix/thai-numbers`).
+2. **Open a pull request into `staging`**, not `main`; the template asks what it changes and
    how you tested it. Something big? Open an issue first, so we agree on the shape.
-2. **Check** runs the commands above on Linux, Windows and macOS. On your first pull request
-   it waits until a maintainer lets it run.
-3. A maintainer reviews it. Anyone is welcome to review too, and it helps, but a merge needs
-   all three checks green and a maintainer's approval.
-4. It's squashed into one commit on `main`, titled after the pull request: keep the title to
-   one line that says what changes ("Read Codex CLI's session logs").
+3. **Check** runs the commands above on Linux, Windows and macOS, and checks the branch name.
+   On your first pull request it waits until the maintainer lets it run.
+4. **The maintainer reviews and merges.** Anyone is welcome to review, and it helps, but only
+   the maintainer can merge. It's squashed into one commit on `staging`, titled after the pull
+   request: keep the title to one line that says what changes ("Read Codex CLI's session logs").
+5. **Releases:** now and then the maintainer takes what has gathered on `staging` into `main`
+   as one release. `main` builds the installers and updates the website; `staging` never does.
 
 Found a security problem? Report it privately instead (see [SECURITY.md](SECURITY.md)).
 
 Unless you say otherwise, what you contribute is licensed like Lody: MIT or Apache-2.0.
+
+## Releasing (maintainer)
+
+1. On `staging`, set the new version in `Cargo.toml` and `crates/lody-app/tauri.conf.json`.
+2. Open a pull request from `staging` into `main` titled "Release 0.2.0", and squash-merge it.
+   **Build** publishes `v0.2.0` with the installers, and the website offers it at once.
+3. Put `staging` back on `main`, so the next round starts from the release:
+   `git fetch origin && git push --force-with-lease origin origin/main:staging`.

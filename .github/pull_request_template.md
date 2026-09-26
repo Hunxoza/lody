@@ -1,3 +1,5 @@
+<!-- Into staging, from a feat/, fix/, docs/ or chore/ branch of your fork (see CONTRIBUTING.md). -->
+
 ## What this changes
 
 <!-- One or two sentences. For a new program: which one, and what Lody reads from it. -->

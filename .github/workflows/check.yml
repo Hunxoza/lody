@@ -1,13 +1,14 @@
-# Checks every pull request and every push to main: formatting, lint and tests, on Linux,
-# Windows and macOS (each has code of its own: muting is Windows only, the app menu Linux only).
-# A pull request can be merged once all three pass (the ruleset on main requires them).
-# From a first-time contributor's fork it waits until the owner approves the run.
+# Checks every pull request and every push to staging and main: formatting, lint and tests, on
+# Linux, Windows and macOS (each has code of its own: muting is Windows only, the app menu
+# Linux only), and that a pull request comes the right way: feat/, fix/, docs/ or chore/ into
+# staging, and only staging into main. The rulesets require all of them before a merge.
+# From a first-time contributor's fork it waits until the maintainer approves the run.
 name: Check
 
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, staging]
 
 # A new push to the same pull request cancels the check still running on the old one.
 concurrency:
@@ -18,6 +19,23 @@ permissions:
   contents: read
 
 jobs:
+  branch-name:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: From feat/, fix/, docs/ or chore/ into staging; only staging into main
+        env:
+          HEAD: ${{ github.head_ref }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          case "$BASE:$HEAD" in
+            staging:feat/* | staging:fix/* | staging:docs/* | staging:chore/* | main:staging) ;;
+            *)
+              echo "::error::'$HEAD' into '$BASE': open the pull request from a feat/, fix/, docs/ or chore/ branch into staging (see CONTRIBUTING.md)."
+              exit 1
+              ;;
+          esac
+
   check:
     strategy:
       fail-fast: false
