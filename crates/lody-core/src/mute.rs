@@ -10,6 +10,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use windows::Win32::Foundation::S_OK;
 use windows::Win32::Media::Audio::{
@@ -29,13 +30,35 @@ struct Muted {
     program: String,
 }
 
+/// Muted by this run while speaking.
 static MUTED: Mutex<Vec<Muted>> = Mutex::new(Vec::new());
+/// Muted by an earlier run that stopped first, and not found since: a program has its sound
+/// only while it plays, and Windows brings it back muted when it plays again.
+static LEFT: Mutex<Vec<Muted>> = Mutex::new(Vec::new());
+
+/// Look for the programs left muted this often, until all are found.
+const LOOK_AGAIN: Duration = Duration::from_secs(5);
 
 fn record() -> PathBuf {
     crate::settings::state_dir().join("muted-programs.txt")
 }
 
-/// Both ids of each, for matching: one line per program, "<sound>\t<program>".
+/// Write down every program still muted by Lody, one line each: "<sound>\t<program>".
+/// `muted` is this run's, already locked (locks are taken in that order: MUTED, then LEFT).
+fn write_down(muted: &[Muted]) {
+    let left = LEFT.lock().unwrap();
+    let lines: Vec<String> =
+        muted.iter().chain(left.iter()).map(|m| format!("{}\t{}", m.sound, m.program)).collect();
+    let path = record();
+    let _ = if lines.is_empty() {
+        std::fs::remove_file(path)
+    } else {
+        std::fs::create_dir_all(path.parent().unwrap())
+            .and_then(|_| std::fs::write(path, lines.join("\n")))
+    };
+}
+
+/// Both ids of each, for matching.
 fn ids(muted: &[Muted]) -> HashSet<String> {
     muted
         .iter()
@@ -55,35 +78,45 @@ pub fn others(mute: bool) {
     } else {
         let ids = ids(&muted);
         muted.clear();
-        on_com_thread(move || unmute(&ids))
+        on_com_thread(move || unmute(&ids).map(|_| ()))
     };
     if let Err(e) = result {
         log::warn!("could not {} the other programs: {e}", if mute { "mute" } else { "unmute" });
     }
-    let path = record();
-    let lines: Vec<String> = muted.iter().map(|m| format!("{}\t{}", m.sound, m.program)).collect();
-    let _ = if muted.is_empty() {
-        std::fs::remove_file(path)
-    } else {
-        std::fs::create_dir_all(path.parent().unwrap())
-            .and_then(|_| std::fs::write(path, lines.join("\n")))
-    };
+    write_down(&muted);
 }
 
-/// Unmute what an earlier run muted and did not get to unmute (it was closed while speaking).
+/// Unmute what an earlier run muted and did not get to unmute (it stopped while speaking).
+/// A program not playing now is looked for again every few seconds, and unmuted when it is.
 pub fn recover() {
     let Ok(text) = std::fs::read_to_string(record()) else { return };
     // Older runs wrote only the sound's id.
-    let ids: HashSet<String> = text
+    let left: Vec<Muted> = text
         .lines()
-        .flat_map(|line| line.split('\t'))
-        .filter(|id| !id.is_empty())
-        .map(str::to_string)
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let (sound, program) = line.split_once('\t').unwrap_or((line, ""));
+            Muted { sound: sound.to_string(), program: program.to_string() }
+        })
         .collect();
-    if let Err(e) = on_com_thread(move || unmute(&ids)) {
-        log::warn!("could not unmute the programs muted last time: {e}");
-    }
-    let _ = std::fs::remove_file(record());
+    *LEFT.lock().unwrap() = left;
+    std::thread::spawn(|| {
+        loop {
+            let wanted = ids(&LEFT.lock().unwrap());
+            match on_com_thread(move || unmute(&wanted)) {
+                Ok(found) => LEFT
+                    .lock()
+                    .unwrap()
+                    .retain(|m| !found.contains(&m.sound) && !found.contains(&m.program)),
+                Err(e) => log::warn!("could not unmute the programs muted last time: {e}"),
+            }
+            write_down(&MUTED.lock().unwrap());
+            if LEFT.lock().unwrap().is_empty() {
+                break;
+            }
+            std::thread::sleep(LOOK_AGAIN);
+        }
+    });
 }
 
 /// COM work on a thread of its own, so it cannot clash with how the audio output set COM up.
@@ -120,25 +153,24 @@ fn mute_one(control: &IAudioSessionControl2, volume: &ISimpleAudioVolume) -> Opt
     }
 }
 
-/// Unmute the muted sounds with one of `ids`: the same sound, or the same program since
-/// restarted. Each on its own, like muting.
-fn unmute(ids: &HashSet<String>) -> Result<()> {
+/// Unmute the sounds with one of `ids`: the same sound, or the same program since restarted.
+/// Each on its own, like muting. Returns the ids of those found, muted or not (someone may
+/// have unmuted them already): a program not playing now isn't among them.
+fn unmute(ids: &HashSet<String>) -> Result<HashSet<String>> {
+    let mut found = HashSet::new();
     for (control, volume) in sessions()? {
-        let theirs = || unsafe {
-            if !volume.GetMute().ok()?.as_bool() {
-                return None;
-            }
-            let sound = control.GetSessionInstanceIdentifier().map(text).unwrap_or_default();
-            let program = control.GetSessionIdentifier().map(text).unwrap_or_default();
-            Some(ids.contains(&sound) || ids.contains(&program))
-        };
-        if theirs() == Some(true)
-            && let Err(e) = unsafe { volume.SetMute(false, std::ptr::null()) }
-        {
-            log::warn!("could not unmute a program: {e}");
+        let sound = unsafe { control.GetSessionInstanceIdentifier() }.map(text).unwrap_or_default();
+        let program = unsafe { control.GetSessionIdentifier() }.map(text).unwrap_or_default();
+        if !ids.contains(&sound) && !ids.contains(&program) {
+            continue;
+        }
+        let muted = unsafe { volume.GetMute() }.is_ok_and(|m| m.as_bool());
+        match muted.then(|| unsafe { volume.SetMute(false, std::ptr::null()) }) {
+            Some(Err(e)) => log::warn!("could not unmute a program: {e}"),
+            _ => found.extend([sound, program]),
         }
     }
-    Ok(())
+    Ok(found)
 }
 
 /// Each program's sound on the default output.
@@ -201,6 +233,13 @@ mod tests {
         std::fs::write(super::record(), lines.join("\n")).unwrap();
 
         super::recover();
+        // It unmutes in the background: wait until it has found them all.
+        for _ in 0..50 {
+            if super::LEFT.lock().unwrap().is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         let still = super::on_com_thread(|| {
             let mut muted = 0;
             for (_, volume) in super::sessions()? {

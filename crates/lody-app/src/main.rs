@@ -516,6 +516,16 @@ fn main() -> anyhow::Result<()> {
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())?;
+        .build(tauri::generate_context!())?
+        .run(|_app, event| {
+            // However Lody is quit (tray, window, signing out), give the other programs their
+            // sound back if it muted them while speaking.
+            #[cfg(windows)]
+            if let tauri::RunEvent::Exit = event {
+                lody_core::mute::others(false);
+            }
+            #[cfg(not(windows))]
+            let _ = event;
+        });
     Ok(())
 }
