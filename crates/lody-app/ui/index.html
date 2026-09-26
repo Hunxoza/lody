@@ -26,6 +26,7 @@
     <button data-tab="replies">Replies</button>
     <button data-tab="voice">Voice</button>
     <button data-tab="handy">Speech to text</button>
+    <button data-tab="corrections">Corrections</button>
     <button data-tab="app">App</button>
   </nav>
 
@@ -153,6 +154,26 @@
         <h2>Models for <span id="h-language-name"></span> <small class="muted">Pick and download them in Handy, under Models.</small></h2>
         <div id="models" class="models"></div>
       </div>
+    </section>
+
+    <!-- Corrections: what Handy heard next to what you sent -->
+    <section class="tab" id="tab-corrections" hidden>
+      <p class="muted">When you edit what Handy typed before sending it to Claude Code, Lody keeps both. The words you fix show where the speech model goes wrong; with the recordings they can train it later. Everything stays on this computer.</p>
+      <div class="card">
+        <label class="row">
+          <span>Keep what Handy heard next to what you sent</span>
+          <input type="checkbox" id="corr-enabled" class="switch">
+        </label>
+        <label class="row">
+          <span>Keep the recordings too<small>About 0.5 MB each; needed to train a speech model.</small></span>
+          <input type="checkbox" id="corr-audio" class="switch">
+        </label>
+      </div>
+      <div class="stats" id="corr-stats"></div>
+      <h2>Words to add to Handy <small class="muted">Handy → Advanced → Custom Words</small></h2>
+      <div class="card info" id="corr-words"></div>
+      <h2>Pairs <small class="muted" id="corr-folder"></small></h2>
+      <div id="corr-list" class="feed"></div>
     </section>
 
     <!-- App: where Lody lives on this computer -->

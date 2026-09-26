@@ -40,6 +40,7 @@ document.querySelectorAll("nav button").forEach((b) =>
     document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("active", x === b));
     document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== `tab-${b.dataset.tab}`));
     if (b.dataset.tab === "handy") loadHandy();
+    if (b.dataset.tab === "corrections") loadCorrections();
   }),
 );
 
@@ -91,6 +92,9 @@ function render() {
     ? `Audio plays through ${state.player}.`
     : "No audio player found: install mpv or ffmpeg to hear replies.";
   $("display").checked = s.display.enabled;
+  $("corr-enabled").checked = s.corrections.enabled;
+  $("corr-audio").checked = s.corrections.keep_audio;
+  $("corr-audio").disabled = !s.corrections.enabled;
 }
 
 // --- Programs Lody reads from: one switch each (sources::PROGRAMS) ---
@@ -231,6 +235,8 @@ function formSettings() {
   s.locale = locale.code;
   s.translate = $("translate").checked;
   s.display.enabled = $("display").checked;
+  s.corrections.enabled = $("corr-enabled").checked;
+  s.corrections.keep_audio = $("corr-audio").checked;
   s.timeout = Math.max(2, parseInt($("timeout").value, 10) || 8);
   s.translator = $("translator").value;
   document.querySelectorAll("[data-source]").forEach((i) => (s.sources[i.dataset.source] = i.checked));
@@ -268,7 +274,7 @@ async function save() {
   }
 }
 
-["locale", "translate", "display", "timeout", "translator", "speech-enabled", "scope", "voice", "announce", "progress", "progress-every", "max-chars", "wait-handy", "mute-others", "voice-command", "voice-openai-url", "voice-openai-model", "voice-openai-voice", "voice-openai-key"].forEach(
+["locale", "translate", "display", "corr-enabled", "corr-audio", "timeout", "translator", "speech-enabled", "scope", "voice", "announce", "progress", "progress-every", "max-chars", "wait-handy", "mute-others", "voice-command", "voice-openai-url", "voice-openai-model", "voice-openai-voice", "voice-openai-key"].forEach(
   (id) => $(id).addEventListener("change", save),
 );
 $("voice").addEventListener("input", () => renderVoiceNote(currentLocale()));
@@ -436,6 +442,66 @@ async function openHandy() {
 // Coming back from Handy's window: show what changed there.
 window.addEventListener("focus", () => {
   if (!$("tab-handy").hidden) loadHandy();
+});
+
+// --- Corrections ---
+
+const KIND = { same: "Sent as heard", fix: "Fixed", rewrite: "Reworded" };
+
+async function loadCorrections() {
+  let c;
+  try {
+    c = await invoke("corrections");
+  } catch (e) {
+    toast(String(e), true);
+    return;
+  }
+  const checked = c.same + c.fixed;
+  const stat = (n, label) => el("div", { className: "stat" }, el("b", { textContent: n }), el("span", { textContent: label }));
+  $("corr-stats").replaceChildren(
+    stat(c.same, "sent as heard"),
+    stat(c.fixed, "fixed by you"),
+    stat(c.rewritten, "reworded"),
+    stat(checked ? `${Math.round((100 * c.same) / checked)}%` : "–", "heard right"),
+  );
+
+  const words = $("corr-words");
+  if (c.suggestions.length) {
+    const chips = el("div", { className: "chips" }, ...c.suggestions.map(([w, n]) => el("span", { className: "chip" }, w, el("small", { textContent: `×${n}` }))));
+    const copy = button("Copy all", () =>
+      navigator.clipboard.writeText(c.suggestions.map(([w]) => w).join("\n")).then(() => toast("Copied: paste them in Handy's Custom Words")),
+    "secondary");
+    words.replaceChildren(chips, el("div", { className: "buttons" }, copy));
+  } else {
+    words.replaceChildren(el("p", { className: "muted", textContent: "No suggestions yet: English words you correct in Handy's text show up here." }));
+  }
+
+  $("corr-folder").textContent = "";
+  $("corr-folder").append(`${c.pairs.length ? c.pairs.length + " kept · " : ""}`, Object.assign(el("a", { href: "#", textContent: "open folder" }), {
+    onclick: (e) => {
+      e.preventDefault();
+      invoke("open_corrections_folder").catch((err) => toast(String(err), true));
+    },
+  }));
+  const list = $("corr-list");
+  list.replaceChildren(...(c.pairs.length ? c.pairs.map(pairCard) : [el("p", { className: "muted", textContent: "Nothing yet. Speak with Handy into Claude Code, fix what it got wrong, and press Enter." })]));
+}
+
+function pairCard(p) {
+  const when = new Date(p.at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const tag = el("span", { className: `tag${p.kind === "fix" ? " good" : ""}`, textContent: KIND[p.kind] || p.kind });
+  const meta = el("span", { className: "meta" }, el("b", { textContent: p.project || "prompt" }), ` · ${when} `, tag, p.post_processed ? " · via Super+E" : "", p.audio ? " · 🎙" : "");
+  const remove = button("Delete", async () => {
+    await invoke("correction_remove", { id: p.id }).catch((e) => toast(String(e), true));
+    loadCorrections();
+  }, "secondary");
+  const spans = el("div", { className: "spans" }, ...p.spans.slice(0, 12).map((s) => el("div", {}, el("del", { textContent: s.from || "∅" }), " → ", el("ins", { textContent: s.to || "∅" }))));
+  const full = el("details", {}, el("summary", { textContent: "Both texts" }), el("p", { textContent: `Heard: ${p.heard}` }), el("p", { textContent: `Sent: ${p.sent}` }));
+  return el("article", { className: "reply" }, el("header", {}, meta, el("div", { className: "tools" }, remove)), p.spans.length ? spans : "", full);
+}
+
+listen("correction", () => {
+  if (!$("tab-corrections").hidden) loadCorrections();
 });
 
 // --- Events from the app ---

@@ -2,7 +2,7 @@
 //! it a new prompt. While the AI works, its tool steps are counted and said in your language
 //! when the speaker is free ("searched the web 3 times"); only the reply is translated.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -16,6 +16,9 @@ use crate::translate::Translator;
 
 /// A session counts as active this long after its last reply or prompt.
 const ACTIVE_FOR: Duration = Duration::from_secs(10 * 60);
+
+/// Told about each pair of what Handy heard and what you sent.
+pub type OnCorrection = Arc<dyn Fn(&crate::corrections::Pair) + Send + Sync>;
 
 /// Told about each reply once it is translated, whether or not it is read aloud.
 pub type OnReply = Arc<dyn Fn(&Reply) + Send + Sync>;
@@ -48,6 +51,9 @@ pub struct Engine {
     /// When progress was last said, per session.
     last_progress: HashMap<String, Instant>,
     on_reply: Option<OnReply>,
+    on_correction: Option<OnCorrection>,
+    /// Handy transcriptions already paired with a prompt.
+    heard_used: Arc<Mutex<HashSet<i64>>>,
 }
 
 impl Engine {
@@ -68,9 +74,16 @@ impl Engine {
             steps: HashMap::new(),
             last_progress: HashMap::new(),
             on_reply: None,
+            on_correction: None,
+            heard_used: Arc::default(),
         };
         engine.start_sources();
         engine
+    }
+
+    pub fn on_correction(mut self, f: OnCorrection) -> Engine {
+        self.on_correction = Some(f);
+        self
     }
 
     pub fn on_reply(mut self, f: OnReply) -> Engine {
@@ -119,11 +132,32 @@ impl Engine {
 
     pub fn handle(&mut self, event: Event) {
         match event {
-            Event::Prompt { session } => {
+            Event::Prompt { session, project, text } => {
                 self.last_seen.insert(session.clone(), Instant::now());
                 *self.generation.lock().unwrap().entry(session.clone()).or_default() += 1;
                 self.next_turn(&session);
                 self.speaker.stop_session(&session);
+                if self.settings.corrections.enabled {
+                    let keep_audio = self.settings.corrections.keep_audio;
+                    let (used, on_correction) =
+                        (self.heard_used.clone(), self.on_correction.clone());
+                    std::thread::spawn(move || {
+                        let store = crate::corrections::Store::open_default();
+                        let mut used = used.lock().unwrap();
+                        match crate::corrections::record_prompt(
+                            &store, &project, &text, &mut used, keep_audio,
+                        ) {
+                            Ok(Some(pair)) => {
+                                log::info!("kept what Handy heard next to what you sent");
+                                if let Some(f) = on_correction {
+                                    f(&pair);
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => log::warn!("could not compare with Handy's history: {e}"),
+                        }
+                    });
+                }
             }
             Event::Reply { session, project, text } => {
                 self.last_seen.insert(session.clone(), Instant::now());
@@ -290,6 +324,7 @@ mod tests {
         let speaker = Speaker::new(Arc::new(Echo), Box::new(played.clone()));
         let mut settings = Settings::default();
         settings.sources.set("claude_code", false);
+        settings.corrections.enabled = false;
         let locale = Locale::load("th", None).unwrap();
         (Engine::new(settings, locale, Arc::new(Fake::default()), speaker), played)
     }
@@ -350,6 +385,7 @@ mod tests {
         let speaker = Speaker::new(Arc::new(Echo), Box::new(played.clone()));
         let mut settings = Settings::default();
         settings.sources.set("claude_code", false);
+        settings.corrections.enabled = false;
         let locale = Locale::load("th", None).unwrap();
         let mut engine = Engine::new(settings, locale, translator.clone(), speaker);
         engine.handle(Event::Progress {

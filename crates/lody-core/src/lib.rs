@@ -2,6 +2,7 @@
 //! No window or tray here, so it builds and tests anywhere; the app and the `lody` command
 //! both drive it through `Engine`.
 
+pub mod corrections;
 pub mod engine;
 pub mod filter;
 pub mod handy;

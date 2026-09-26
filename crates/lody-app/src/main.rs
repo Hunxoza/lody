@@ -254,6 +254,56 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
+// --- Corrections: what Handy heard next to what you sent ---
+
+#[derive(Serialize)]
+struct CorrectionsView {
+    /// Newest first.
+    pairs: Vec<lody_core::corrections::Pair>,
+    same: usize,
+    fixed: usize,
+    rewritten: usize,
+    /// English words you keep correcting, with how often: candidates for Handy's custom words.
+    suggestions: Vec<(String, usize)>,
+    folder: String,
+    handy_history_limit: Option<u64>,
+}
+
+#[tauri::command]
+fn corrections() -> CorrectionsView {
+    use lody_core::corrections::{Kind, Store, suggested_words};
+    let store = Store::open_default();
+    let mut pairs = store.all();
+    let config = handy::read_config(&handy::settings_path()).ok().flatten();
+    let known = config.as_ref().map(|c| c.custom_words.clone()).unwrap_or_default();
+    let count = |k: Kind| pairs.iter().filter(|p| p.kind == k).count();
+    let (same, fixed, rewritten) = (count(Kind::Same), count(Kind::Fix), count(Kind::Rewrite));
+    let suggestions = suggested_words(&pairs, &known);
+    pairs.reverse();
+    pairs.truncate(200);
+    CorrectionsView {
+        pairs,
+        same,
+        fixed,
+        rewritten,
+        suggestions,
+        folder: store.dir().display().to_string(),
+        handy_history_limit: config.map(|c| c.history_limit),
+    }
+}
+
+#[tauri::command]
+fn correction_remove(id: u64) -> Answer<()> {
+    lody_core::corrections::Store::open_default().remove(id).map_err(fail)
+}
+
+#[tauri::command]
+fn open_corrections_folder() -> Answer<()> {
+    let dir = lody_core::corrections::Store::open_default().dir().to_path_buf();
+    std::fs::create_dir_all(&dir).map_err(fail)?;
+    desktop::open(&dir.to_string_lossy()).map_err(fail)
+}
+
 // --- Handy ---
 
 #[derive(Serialize)]
@@ -458,6 +508,9 @@ fn main() -> anyhow::Result<()> {
             test_voice,
             stop_speaking,
             read_again,
+            corrections,
+            correction_remove,
+            open_corrections_folder,
             set_paused,
             set_in_menu,
             set_at_login,
@@ -474,6 +527,7 @@ fn main() -> anyhow::Result<()> {
             }
             // The engine watches the AI's logs on its own thread; new settings arrive by channel.
             std::thread::Builder::new().name("lody-engine".into()).spawn(move || {
+                let told = handle.clone();
                 let next_id = std::sync::atomic::AtomicU64::new(1);
                 let on_reply: lody_core::engine::OnReply = Arc::new(move |reply| {
                     let shown = Shown {
@@ -494,8 +548,12 @@ fn main() -> anyhow::Result<()> {
                     drop(history);
                     let _ = handle.emit("reply", shown);
                 });
-                let mut engine =
-                    Engine::new(settings, locale, translator, speaker).on_reply(on_reply);
+                let on_correction: lody_core::engine::OnCorrection = Arc::new(move |pair| {
+                    let _ = told.emit("correction", pair.clone());
+                });
+                let mut engine = Engine::new(settings, locale, translator, speaker)
+                    .on_reply(on_reply)
+                    .on_correction(on_correction);
                 loop {
                     while let Ok((settings, locale)) = engine_rx.try_recv() {
                         engine.apply(settings, locale);

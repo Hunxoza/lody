@@ -70,6 +70,9 @@ pub struct Config {
     pub translate_to_english: bool,
     /// How Handy puts the text in: `direct` (types), `ctrl_v`, `ctrl_shift_v`, `none`, ...
     pub paste_method: String,
+    pub custom_words: Vec<String>,
+    /// How many transcriptions Handy keeps in its history.
+    pub history_limit: u64,
 }
 
 /// `settings_store.json` in Handy's data folder (`~/.local/share/com.pais.handy` on Linux).
@@ -93,6 +96,11 @@ pub fn read_config(path: &Path) -> Result<Option<Config>, Error> {
         language: text("selected_language", "auto"),
         translate_to_english: s["translate_to_english"].as_bool().unwrap_or(false),
         paste_method: text("paste_method", "ctrl_v"),
+        custom_words: s["custom_words"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|w| Some(w.as_str()?.to_string())).collect())
+            .unwrap_or_default(),
+        history_limit: s["history_limit"].as_u64().unwrap_or(5),
     }))
 }
 
@@ -336,6 +344,8 @@ mod tests {
             language: "en".into(),
             translate_to_english: true,
             paste_method: "none".into(),
+            custom_words: vec![],
+            history_limit: 5,
         };
         let found = problems(&config, "th", "Thai").join("\n");
         assert!(found.contains("cannot translate"), "{found}");

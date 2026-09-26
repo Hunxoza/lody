@@ -49,6 +49,19 @@ p { margin: 0; }
 .actions { display: flex; gap: 8px; }
 
 .feed { display: grid; gap: 12px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 12px; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.stat b { display: block; font-size: 20px; }
+.stat span { font-size: 12px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 3px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); }
+.chip small { margin-left: 4px; }
+.spans { display: grid; gap: 4px; margin: 4px 0 8px; }
+.spans div { font-size: 14px; }
+del { color: var(--danger); text-decoration: line-through; }
+ins { color: var(--ok); text-decoration: none; font-weight: 600; }
+details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+details p { margin-top: 6px; font-size: 13px; white-space: pre-wrap; }
 .reply { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
 .reply header { all: unset; display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
 .reply .meta { font-size: 12px; color: var(--muted); }

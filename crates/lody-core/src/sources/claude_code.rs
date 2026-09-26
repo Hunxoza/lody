@@ -68,12 +68,19 @@ pub fn parse_line(line: &str) -> Option<Event> {
         }
         // Something you wrote, not a tool's result coming back.
         "user" => {
-            let typed = match &message["content"] {
-                Value::String(_) => true,
-                Value::Array(blocks) => blocks.iter().any(|b| b["type"] == "text"),
-                _ => false,
+            let text = match &message["content"] {
+                Value::String(text) => Some(text.clone()),
+                Value::Array(blocks) if blocks.iter().any(|b| b["type"] == "text") => Some(
+                    blocks
+                        .iter()
+                        .filter(|b| b["type"] == "text")
+                        .filter_map(|b| b["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+                _ => None,
             };
-            typed.then_some(Event::Prompt { session })
+            text.map(|text| Event::Prompt { session, project, text })
         }
         _ => None,
     }
@@ -244,7 +251,14 @@ mod tests {
     fn a_new_prompt_is_seen() {
         let prompt =
             r#"{"type":"user","sessionId":"s1","cwd":"/p/x","message":{"content":"fix it"}}"#;
-        assert_eq!(parse_line(prompt), Some(Event::Prompt { session: "s1".into() }));
+        assert_eq!(
+            parse_line(prompt),
+            Some(Event::Prompt {
+                session: "s1".into(),
+                project: "x".into(),
+                text: "fix it".into()
+            })
+        );
     }
 
     #[test]

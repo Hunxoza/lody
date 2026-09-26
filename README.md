@@ -30,7 +30,9 @@ Google Translate, its second address (the same translations, limited separately)
 Haiku or Sonnet through the `claude` command and your Claude Code sign-in (slower, more natural
 Thai). When it fails, Lody says so in your language and reads the English.
 
-The **Read** tab shows each reply translated in full.
+The **Read** tab shows each reply translated in full. **Corrections** keeps what Handy heard
+next to what you sent to Claude Code (with the recording) in `~/.local/state/lody/corrections/`,
+and suggests the English words you keep fixing for Handy's Custom Words.
 
 ### Install
 

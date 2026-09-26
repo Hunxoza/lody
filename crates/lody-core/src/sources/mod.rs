@@ -16,8 +16,9 @@ pub enum Event {
     /// The AI started a tool; `tool` is the program's own name for it ("Bash", "WebSearch") and
     /// `input` what it was given (see `progress::detail` for what of it is ever said).
     Tool { session: String, project: String, tool: String, input: serde_json::Value },
-    /// You sent a new prompt: whatever this session is reading stops.
-    Prompt { session: String },
+    /// You sent a new prompt: whatever this session is reading stops. `text` is what you sent
+    /// (compared with what Handy heard, see `corrections`).
+    Prompt { session: String, project: String, text: String },
 }
 
 /// Follows one program: called a few times a second, on the engine's own thread.

@@ -26,6 +26,7 @@ pub struct Settings {
     pub voices: VoiceEngines,
     pub display: Display,
     pub sources: Sources,
+    pub corrections: Corrections,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -93,6 +94,21 @@ pub struct Display {
     pub max_chars: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Corrections {
+    /// Keep what Handy heard next to what you sent (see `corrections`).
+    pub enabled: bool,
+    /// Copy each recording too, for training a speech model later.
+    pub keep_audio: bool,
+}
+
+impl Default for Corrections {
+    fn default() -> Self {
+        Corrections { enabled: true, keep_audio: true }
+    }
+}
+
 /// Which programs are read, by their id in `sources::PROGRAMS` (`claude_code = false`); one
 /// not listed is read.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -137,6 +153,7 @@ impl Default for Settings {
             voices: VoiceEngines::default(),
             display: Display::default(),
             sources: Sources::default(),
+            corrections: Corrections::default(),
         }
     }
 }

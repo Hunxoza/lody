@@ -31,7 +31,7 @@ pub trait Source: Send {
 | Event | When | What Lody does |
 |---|---|---|
 | `Reply { session, project, text }` | The AI finished its answer | Translates it and reads it aloud |
-| `Prompt { session }` | You sent a new message | Stops reading that session |
+| `Prompt { session, project, text }` | You sent a new message; `text` is what you sent | Stops reading that session, and compares `text` with what Handy heard (Corrections) |
 | `Tool { session, project, tool, input }` | The AI started a tool | Says "running a command", "searching the web" (see `progress.rs`) |
 | `Progress { session, project, text }` | The AI wrote something while still working | Nothing yet |
 
