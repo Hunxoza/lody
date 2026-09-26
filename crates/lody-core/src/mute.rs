@@ -2,6 +2,10 @@
 //! the programs that were not muted already are muted, and only those are unmuted again. Which
 //! ones is also written down, so if Lody stops without unmuting them, the next start does it.
 //! Windows' per-program volume (the volume mixer), on the default output.
+//!
+//! Each is known two ways: its sound this run (gone once the program restarts its audio), and
+//! the program itself (Windows keeps a program's mute across restarts, so a restarted browser
+//! comes back muted; that is how it is found then).
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -16,13 +20,28 @@ use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
     CoUninitialize,
 };
-use windows::core::{Interface, Result};
+use windows::core::{Interface, PWSTR, Result};
 
-/// The programs Lody muted (Windows' id for each one's sound).
-static MUTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// A program Lody muted: Windows' id for its sound this run, and for the program itself.
+#[derive(Debug, Clone)]
+struct Muted {
+    sound: String,
+    program: String,
+}
+
+static MUTED: Mutex<Vec<Muted>> = Mutex::new(Vec::new());
 
 fn record() -> PathBuf {
     crate::settings::state_dir().join("muted-programs.txt")
+}
+
+/// Both ids of each, for matching: one line per program, "<sound>\t<program>".
+fn ids(muted: &[Muted]) -> HashSet<String> {
+    muted
+        .iter()
+        .flat_map(|m| [m.sound.clone(), m.program.clone()])
+        .filter(|id| !id.is_empty())
+        .collect()
 }
 
 /// Mute (true) the other programs that are not muted, or unmute (false) the ones Lody muted.
@@ -32,27 +51,35 @@ pub fn others(mute: bool) {
         return;
     }
     let result = if mute {
-        on_com_thread(mute_all).map(|ids| *muted = ids)
+        on_com_thread(mute_all).map(|found| *muted = found)
     } else {
-        let ids: HashSet<String> = muted.drain(..).collect();
+        let ids = ids(&muted);
+        muted.clear();
         on_com_thread(move || unmute(&ids))
     };
     if let Err(e) = result {
         log::warn!("could not {} the other programs: {e}", if mute { "mute" } else { "unmute" });
     }
     let path = record();
+    let lines: Vec<String> = muted.iter().map(|m| format!("{}\t{}", m.sound, m.program)).collect();
     let _ = if muted.is_empty() {
         std::fs::remove_file(path)
     } else {
         std::fs::create_dir_all(path.parent().unwrap())
-            .and_then(|_| std::fs::write(path, muted.join("\n")))
+            .and_then(|_| std::fs::write(path, lines.join("\n")))
     };
 }
 
 /// Unmute what an earlier run muted and did not get to unmute (it was closed while speaking).
 pub fn recover() {
     let Ok(text) = std::fs::read_to_string(record()) else { return };
-    let ids: HashSet<String> = text.lines().map(str::to_string).collect();
+    // Older runs wrote only the sound's id.
+    let ids: HashSet<String> = text
+        .lines()
+        .flat_map(|line| line.split('\t'))
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .collect();
     if let Err(e) = on_com_thread(move || unmute(&ids)) {
         log::warn!("could not unmute the programs muted last time: {e}");
     }
@@ -71,26 +98,44 @@ fn on_com_thread<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'stat
     .unwrap_or_else(|_| Err(windows::core::Error::empty()))
 }
 
-fn mute_all() -> Result<Vec<String>> {
-    let mut muted = vec![];
-    for (control, volume) in sessions()? {
-        unsafe {
-            let ours = control.GetProcessId().is_ok_and(|pid| pid == std::process::id());
-            if ours || control.IsSystemSoundsSession() == S_OK || volume.GetMute()?.as_bool() {
-                continue;
-            }
-            let id = instance_id(&control)?;
-            volume.SetMute(true, std::ptr::null())?;
-            muted.push(id);
-        }
-    }
-    Ok(muted)
+/// Mute each program playing through the default output. One Windows can't answer about
+/// (a sound just closing) is skipped: it never costs the list of those already muted, which
+/// would then stay muted with nothing to unmute them.
+fn mute_all() -> Result<Vec<Muted>> {
+    Ok(sessions()?.iter().filter_map(|(control, volume)| mute_one(control, volume)).collect())
 }
 
+fn mute_one(control: &IAudioSessionControl2, volume: &ISimpleAudioVolume) -> Option<Muted> {
+    unsafe {
+        let ours = control.GetProcessId().is_ok_and(|pid| pid == std::process::id());
+        if ours || control.IsSystemSoundsSession() == S_OK || volume.GetMute().ok()?.as_bool() {
+            return None;
+        }
+        let found = Muted {
+            sound: text(control.GetSessionInstanceIdentifier().ok()?),
+            program: control.GetSessionIdentifier().map(text).unwrap_or_default(),
+        };
+        volume.SetMute(true, std::ptr::null()).ok()?;
+        Some(found)
+    }
+}
+
+/// Unmute the muted sounds with one of `ids`: the same sound, or the same program since
+/// restarted. Each on its own, like muting.
 fn unmute(ids: &HashSet<String>) -> Result<()> {
     for (control, volume) in sessions()? {
-        if ids.contains(&instance_id(&control)?) {
-            unsafe { volume.SetMute(false, std::ptr::null())? };
+        let theirs = || unsafe {
+            if !volume.GetMute().ok()?.as_bool() {
+                return None;
+            }
+            let sound = control.GetSessionInstanceIdentifier().map(text).unwrap_or_default();
+            let program = control.GetSessionIdentifier().map(text).unwrap_or_default();
+            Some(ids.contains(&sound) || ids.contains(&program))
+        };
+        if theirs() == Some(true)
+            && let Err(e) = unsafe { volume.SetMute(false, std::ptr::null()) }
+        {
+            log::warn!("could not unmute a program: {e}");
         }
     }
     Ok(())
@@ -112,12 +157,12 @@ fn sessions() -> Result<Vec<(IAudioSessionControl2, ISimpleAudioVolume)>> {
     }
 }
 
-fn instance_id(control: &IAudioSessionControl2) -> Result<String> {
+/// A string Windows hands over, freed after.
+fn text(from: PWSTR) -> String {
     unsafe {
-        let text = control.GetSessionInstanceIdentifier()?;
-        let id = text.to_string().unwrap_or_default();
-        CoTaskMemFree(Some(text.0 as _));
-        Ok(id)
+        let text = from.to_string().unwrap_or_default();
+        CoTaskMemFree(Some(from.0 as _));
+        text
     }
 }
 
@@ -138,6 +183,33 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_secs(2));
         super::others(false);
         assert!(super::MUTED.lock().unwrap().is_empty());
+        assert!(!super::record().exists());
+    }
+
+    /// Lody closed while it had them muted, and they restarted their sound since (so only the
+    /// program's id still matches): the next start unmutes them. Run by hand like the above.
+    #[test]
+    #[ignore]
+    fn the_next_start_unmutes_programs_that_restarted() {
+        if std::env::var_os("LODY_TEST_MUTE").is_none() {
+            return;
+        }
+        super::others(true);
+        let muted = std::mem::take(&mut *super::MUTED.lock().unwrap());
+        assert!(!muted.is_empty(), "play something first");
+        let lines: Vec<String> = muted.iter().map(|m| format!("gone\t{}", m.program)).collect();
+        std::fs::write(super::record(), lines.join("\n")).unwrap();
+
+        super::recover();
+        let still = super::on_com_thread(|| {
+            let mut muted = 0;
+            for (_, volume) in super::sessions()? {
+                muted += unsafe { volume.GetMute()?.as_bool() } as usize;
+            }
+            Ok(muted)
+        })
+        .unwrap();
+        assert_eq!(still, 0, "programs left muted");
         assert!(!super::record().exists());
     }
 }
