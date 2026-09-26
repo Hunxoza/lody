@@ -1,0 +1,146 @@
+# Builds Lody's installers on Windows, macOS and Linux side by side.
+# - A release is merged into main: if the version in crates/lody-app/tauri.conf.json has no
+#   release yet, it is built and published as v<version>, and the website offers it at once.
+#   Same version as the last release: nothing is built (bump the version to release).
+#   Check runs first, on all three systems; if it fails, nothing is released.
+# - Or run it from the Actions tab ("Run workflow"): the installers are kept as downloads on
+#   that run, no release. Tick "debug" for a debug build: on Windows it opens a console window
+#   with Lody's log, to see why something went wrong.
+# Only the maintainer can push to main or run it by hand. Forks can run it in their own
+# Actions tab.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: Debug build (shows Lody's log; bigger and slower)
+        type: boolean
+        default: false
+
+# A release is never cut off halfway: a newer push waits, then finds it released and skips.
+# A run by hand is replaced by a newer one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+permissions:
+  contents: write # to create the release and upload to it
+  pull-requests: read # to list what the release brings
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      new: ${{ steps.check.outputs.new }}
+      notes: ${{ steps.notes.outputs.notes }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$(jq -r .version crates/lody-app/tauri.conf.json)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$tag is already released. To release, bump the version in crates/lody-app/tauri.conf.json and Cargo.toml."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # What the release brings: the commits of the staging → main pull request that made it,
+      # one per feature merged into staging, each with its pull request's number.
+      - id: notes
+        if: steps.check.outputs.new == 'true' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            intro="What's new, from #$pr:"
+            list=$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json commits --jq '.commits[].messageHeadline | "- " + .')
+          else
+            intro="What's new:"
+            list="- $(git log -1 --format=%s)"
+          fi
+          {
+            echo "notes<<END_OF_NOTES"
+            printf '%s\n\n%s\n' "$intro" "$list"
+            echo "END_OF_NOTES"
+          } >> "$GITHUB_OUTPUT"
+
+  # A release only after formatting, lint and tests pass everywhere (a build by hand skips it).
+  check:
+    needs: version
+    if: github.event_name == 'push' && needs.version.outputs.new == 'true'
+    uses: ./.github/workflows/check.yml
+
+  build:
+    needs: [version, check]
+    if: >-
+      !cancelled() && needs.version.result == 'success' && needs.check.result != 'failure'
+      && (github.event_name == 'workflow_dispatch' || needs.version.outputs.new == 'true')
+    strategy:
+      fail-fast: false # one platform failing still gives the others' installers
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            args: ""
+          - name: macos
+            os: macos-latest
+            # One app for both Apple silicon and Intel Macs.
+            args: --target universal-apple-darwin
+          - name: linux
+            # The oldest supported Ubuntu, so the AppImage runs on older systems too.
+            os: ubuntu-22.04
+            args: ""
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux libraries
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.name == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: crates/lody-app
+          # No package.json here: run Tauri's command line straight from npm.
+          tauriScript: npx --yes @tauri-apps/cli@^2
+          args: ${{ matrix.args }} ${{ inputs.debug && '--debug' || '' }}
+          # Only main makes a release; a run from the Actions tab just builds.
+          tagName: ${{ github.event_name == 'push' && needs.version.outputs.tag || '' }}
+          releaseName: Lody ${{ needs.version.outputs.tag }}
+          releaseBody: ${{ needs.version.outputs.notes }}
+          releaseDraft: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lody-${{ matrix.name }}${{ inputs.debug && '-debug' || '' }}
+          if-no-files-found: error
+          # release/ or debug/, under the target's own folder on macOS.
+          path: |
+            target/**/bundle/nsis/*.exe
+            target/**/bundle/msi/*.msi
+            target/**/bundle/dmg/*.dmg
+            target/**/bundle/deb/*.deb
+            target/**/bundle/rpm/*.rpm
+            target/**/bundle/appimage/*.AppImage

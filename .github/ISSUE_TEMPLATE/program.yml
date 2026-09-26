@@ -1,0 +1,22 @@
+name: Read another program
+description: Suggest a program for Lody to read, or say you're writing its module.
+labels: [new program]
+body:
+  - type: input
+    id: program
+    attributes:
+      label: Program
+      placeholder: Codex CLI, Gemini CLI, Aider, a chat, a build log…
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where it writes what it does
+      description: Session logs, a history file, a local database… Paths and a few trimmed lines help a lot (nothing private).
+  - type: checkboxes
+    id: writing
+    attributes:
+      label: Writing it yourself?
+      options:
+        - label: I'd like to write this module (see CONTRIBUTING.md, "Add a program")

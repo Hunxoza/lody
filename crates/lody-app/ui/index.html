@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lody</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img src="icon.png" alt="" width="36" height="36">
+      <div>
+        <h1>Lody</h1>
+        <p class="muted" id="status">Starting…</p>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="pause" class="secondary">Pause reading</button>
+      <button id="stop" class="secondary">Stop</button>
+    </div>
+  </header>
+
+  <nav>
+    <button data-tab="read" class="active">Read</button>
+    <button data-tab="replies">Replies</button>
+    <button data-tab="voice">Voice</button>
+    <button data-tab="handy">Speech to text</button>
+    <button data-tab="app">App</button>
+  </nav>
+
+  <main>
+    <!-- Read: each reply in your language, newest first -->
+    <section class="tab" id="tab-read">
+      <p class="muted" id="read-empty">Replies appear here in your language as your programs finish them. Only replies from after Lody started are shown.</p>
+      <div id="feed" class="feed"></div>
+    </section>
+
+    <!-- Replies: where they come from and how they are translated -->
+    <section class="tab" id="tab-replies" hidden>
+      <div class="card">
+        <label class="row">
+          <span>Your language<small>Replies are read aloud in this language.</small></span>
+          <select id="locale"></select>
+        </label>
+        <label class="row">
+          <span>Translate replies<small>Replies arrive in English; Lody translates before reading. Turn off to hear them as written, in English or in your language if the program already uses it.</small></span>
+          <input type="checkbox" id="translate" class="switch">
+        </label>
+        <label class="row">
+          <span>Translate the whole reply<small>Show all of it in the Read tab, not only the part read aloud.</small></span>
+          <input type="checkbox" id="display" class="switch">
+        </label>
+        <label class="row">
+          <span>Translator<small>Free translators; ⭐ is the suggested one. Only prose is sent: code, paths, links and secrets stay on this computer.</small></span>
+          <select id="translator"></select>
+        </label>
+        <div class="voice-note" id="translator-note"></div>
+        <label class="row">
+          <span>Translator timeout<small>Seconds to wait before reading the English instead (Claude gets at least 30).</small></span>
+          <input type="number" id="timeout" min="2" max="60">
+        </label>
+      </div>
+      <h2>Listen to</h2>
+      <div class="card" id="sources"></div>
+    </section>
+
+    <!-- Voice: what is read and how it sounds -->
+    <section class="tab" id="tab-voice" hidden>
+      <div class="card">
+        <label class="row">
+          <span>Read replies aloud</span>
+          <input type="checkbox" id="speech-enabled" class="switch">
+        </label>
+        <label class="row">
+          <span>How much to read<small>Long replies: the first and last paragraph usually carry the answer.</small></span>
+          <select id="scope">
+            <option value="first_last">First and last paragraph</option>
+            <option value="all">The whole reply</option>
+            <option value="last">Only the last paragraph</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>While the AI works<small>Say what it's doing in your language, without translating: running a command, what it searches for, which file it opens. Only the final reply is translated, so the translator isn't asked too often.</small></span>
+          <select id="progress">
+            <option value="all">Its steps</option>
+            <option value="off">Nothing: wait for the answer</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>Progress at most every<small>Seconds. Only the first sentence of what it writes is read, and progress that has waited too long is skipped.</small></span>
+          <input type="number" id="progress-every" min="1" max="60" step="1">
+        </label>
+        <label class="row">
+          <span>Voice<small>Free voices; ⭐ is the suggested one. Press ▶ Test voice below to compare.</small></span>
+          <select id="voice"></select>
+        </label>
+        <div class="voice-note" id="voice-note"></div>
+        <label class="row" id="voice-command-row" hidden>
+          <span>Command<small>Gets the text on its input and writes WAV or MP3 to its output; {rate} becomes the speed in percent.</small></span>
+          <input type="text" id="voice-command" placeholder="espeak-ng -v th --stdout" spellcheck="false">
+        </label>
+        <label class="row" id="voice-openai-url-row" hidden>
+          <span>Address<small>Up to /v1, e.g. https://api.openai.com/v1 or a local server's.</small></span>
+          <input type="text" id="voice-openai-url" spellcheck="false">
+        </label>
+        <label class="row" id="voice-openai-model-row" hidden>
+          <span>Model and voice<small>The service's model, and one of its voices (OpenAI: alloy, nova, shimmer…).</small></span>
+          <span class="pair"><input type="text" id="voice-openai-model" spellcheck="false"><input type="text" id="voice-openai-voice" spellcheck="false" placeholder="alloy"></span>
+        </label>
+        <label class="row" id="voice-openai-key-row" hidden>
+          <span>Key<small>Sent only to the address above; leave empty if it needs none.</small></span>
+          <input type="password" id="voice-openai-key" spellcheck="false" autocomplete="off">
+        </label>
+        <label class="row">
+          <span>Speed <b id="rate-label"></b></span>
+          <input type="range" id="rate" min="-50" max="50" step="5">
+        </label>
+        <label class="row">
+          <span>Say the project's name first<small>Helps when several sessions talk.</small></span>
+          <select id="announce">
+            <option value="auto">When several sessions are active</option>
+            <option value="always">Always</option>
+            <option value="never">Never</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>Pause while Handy records<small>Handy mutes the sound while you speak; Lody waits and reads the cut-off sentence again after.</small></span>
+          <input type="checkbox" id="wait-handy" class="switch">
+        </label>
+        <label class="row">
+          <span>Mute other programs while speaking<small>Music and videos go quiet while Lody reads, and come back after. Windows only.</small></span>
+          <input type="checkbox" id="mute-others" class="switch">
+        </label>
+        <label class="row">
+          <span>Longest reply read<small>Characters; the rest is skipped.</small></span>
+          <input type="number" id="max-chars" min="100" max="20000" step="100">
+        </label>
+      </div>
+      <div class="buttons">
+        <button id="test">▶ Test voice</button>
+        <span class="muted" id="test-text"></span>
+      </div>
+    </section>
+
+    <!-- Handy: the app that listens. Lody checks its setup; changes are made in Handy. -->
+    <section class="tab" id="tab-handy" hidden>
+      <p class="muted">Handy listens to you and types what you say into the AI. Lody checks that it's set up well for your language; you change its settings in Handy itself.</p>
+      <div class="card" id="handy-program"></div>
+      <div class="notice" id="handy-problems" hidden></div>
+      <div id="handy-setup">
+        <div class="card" id="handy-now"></div>
+        <h2>Models for <span id="h-language-name"></span> <small class="muted">Pick and download them in Handy, under Models.</small></h2>
+        <div id="models" class="models"></div>
+      </div>
+    </section>
+
+    <!-- App: where Lody lives on this computer -->
+    <section class="tab" id="tab-app" hidden>
+      <div class="card">
+        <label class="row">
+          <span>Show Lody in the app menu</span>
+          <input type="checkbox" id="in-menu" class="switch">
+        </label>
+        <label class="row">
+          <span>Start Lody when I log in<small>Starts in the background.</small></span>
+          <input type="checkbox" id="at-login" class="switch">
+        </label>
+      </div>
+      <div class="card info">
+        <p>Closing this window keeps Lody reading in the background. Open it again from the app menu or the tray icon.</p>
+        <p class="muted">Settings file: <code id="config-path"></code></p>
+        <p class="muted" id="player"></p>
+      </div>
+      <div class="buttons"><button id="quit" class="danger">Quit Lody</button></div>
+    </section>
+  </main>
+
+  <div id="toast" role="status" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

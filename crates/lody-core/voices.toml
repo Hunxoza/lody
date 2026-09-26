@@ -1,0 +1,71 @@
+# The voices Lody offers, each with a short note shown when choosing. Edge's other voices for the
+# language come from its live list (see `voice::catalog`); add an entry here to give one a note.
+#
+# id       engine:name, as `speech.voice` stores it (engines: edge, google, system, command, openai)
+# speed    1 (slow) to 5 (fast): how soon speech starts, measured
+# natural  1 (robotic) to 5 (like a person); leave it out until someone listened
+# online   needs the internet
+# setup    settings it needs first: "command" or "openai"
+
+# --- Thai ---
+
+[[voice]]
+id = "edge:th-TH-PremwadeeNeural"
+name = "Premwadee"
+engine = "Microsoft Edge"
+languages = ["th"]
+best = true
+speed = 4
+natural = 5
+online = true
+note = "Recommended. The most natural Thai voice here (female), and it reads English words in a reply well. Free, no account, needs the internet."
+
+[[voice]]
+id = "edge:th-TH-NiwatNeural"
+name = "Niwat"
+engine = "Microsoft Edge"
+languages = ["th"]
+speed = 4
+natural = 5
+online = true
+note = "Premwadee's male counterpart: same quality and speed. Free, no account, needs the internet."
+
+[[voice]]
+id = "google:th"
+name = "Google Translate"
+engine = "Google"
+languages = ["th"]
+speed = 5
+natural = 3
+online = true
+note = "The fastest to start (about 0.2 s a sentence). Clear but flatter than Edge's, one voice, and the speed setting doesn't apply. Free, no account, needs the internet."
+
+[[voice]]
+id = "system:th"
+name = "This computer's voice"
+engine = "System"
+languages = ["th"]
+speed = 5
+natural = 1
+online = false
+note = "Built into your computer, no internet or download. On Linux it's espeak-ng: fast but robotic. Windows and macOS need their Thai voice installed."
+
+# --- Any language (listed last: they need setting up) ---
+
+[[voice]]
+id = "openai:alloy"
+name = "OpenAI-compatible service"
+engine = "Your service"
+languages = ["*"]
+online = true
+setup = "openai"
+note = "Any service with OpenAI's speech API, or a local server that copies it. OpenAI's own is paid and needs a key; set the address, model and key below."
+
+[[voice]]
+id = "command:"
+name = "Custom command"
+engine = "Your program"
+languages = ["*"]
+online = false
+setup = "command"
+note = "Any program that reads text aloud: it gets the text on its input and writes WAV or MP3 to its output. For people who already have a voice they like."
