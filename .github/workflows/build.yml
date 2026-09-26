@@ -1,0 +1,88 @@
+# Builds Lody's installers on Windows, macOS and Linux side by side.
+# - Push a version tag (git tag v0.1.8 && git push origin v0.1.8): the installers go to a draft
+#   GitHub Release for that tag, to look over and publish by hand.
+# - Or run it from the Actions tab ("Run workflow"): the installers are kept as downloads on
+#   that run, no release. Tick "debug" for a debug build: on Windows it opens a console window
+#   with Lody's log, to see why something went wrong.
+# Forks can run it too, once Actions is turned on in the fork's Actions tab.
+# A newer run for the same tag or branch cancels the one still going, so nothing builds twice.
+name: Build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: Debug build (shows Lody's log; bigger and slower)
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # to create the release and upload to it
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false # one platform failing still gives the others' installers
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            args: ""
+          - name: macos
+            os: macos-latest
+            # One app for both Apple silicon and Intel Macs.
+            args: --target universal-apple-darwin
+          - name: linux
+            # The oldest supported Ubuntu, so the AppImage runs on older systems too.
+            os: ubuntu-22.04
+            args: ""
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux libraries
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.name == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: crates/lody-app
+          # No package.json here: run Tauri's command line straight from npm.
+          tauriScript: npx --yes @tauri-apps/cli@^2
+          args: ${{ matrix.args }} ${{ inputs.debug && '--debug' || '' }}
+          # Only a tag push makes a release; a run from the Actions tab just builds.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: Lody ${{ github.ref_name }}
+          releaseDraft: true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lody-${{ matrix.name }}${{ inputs.debug && '-debug' || '' }}
+          if-no-files-found: error
+          # release/ or debug/, under the target's own folder on macOS.
+          path: |
+            target/**/bundle/nsis/*.exe
+            target/**/bundle/msi/*.msi
+            target/**/bundle/dmg/*.dmg
+            target/**/bundle/deb/*.deb
+            target/**/bundle/rpm/*.rpm
+            target/**/bundle/appimage/*.AppImage

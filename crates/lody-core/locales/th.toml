@@ -1,0 +1,44 @@
+# Thai. A language is one file like this; the code (file name) is its ISO 639 code.
+name = "Thai"
+native_name = "ไทย"
+
+[stt]
+# What Handy listens for, and the Whisper model where Handy has to translate by itself.
+whisper_language = "th"
+whisper_model = "medium"
+
+[translate]
+# Google Translate's code for this language.
+google = "th"
+
+[tts]
+voice = "th-TH-PremwadeeNeural"
+rate = "+0%"
+
+[text]
+# How speech is split: "punct" (. ! ?), "space" (Thai has no sentence-ending punctuation; a
+# space usually separates clauses) or "none".
+sentence_split = "space"
+# Letters of this language (Thai: U+0E00-U+0E7F): sentences already written in it are not
+# translated.
+native_script = "฀-๿"
+code_omitted = "มีโค้ดหนึ่งส่วน"
+table_omitted = "มีตารางหนึ่งตาราง"
+untranslated = "แปลไม่ได้ อ่านภาษาอังกฤษ"
+
+[text.progress]
+# Said while the AI works: one step ("{step}"), or several of a kind ("{step}", "{n}").
+one = "กำลัง{step}"
+many = "{step} {n} ครั้ง"
+# With what it's about: a command's or task's description ("{detail}", already translated), or a
+# search's query or a file's name after the step.
+doing = "กำลัง{detail}"
+about = "กำลัง{step} {detail}"
+shell = "รันคำสั่ง"
+read = "อ่านไฟล์"
+edit = "แก้ไฟล์"
+search = "ค้นในโค้ด"
+web_search = "ค้นเว็บ"
+web_fetch = "เปิดหน้าเว็บ"
+agent = "ส่งงานให้ผู้ช่วย"
+other = "ใช้เครื่องมือ"

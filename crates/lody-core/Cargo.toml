@@ -1,0 +1,24 @@
+[package]
+name = "lody-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+dirs = "7.0.0"
+fancy-regex = "0.19.2"
+log = "0.4.34"
+msedge-tts = "0.4.0"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.21"
+toml = "1.1.6"
+ureq = "3.4.2"
+
+# Windows has no mpv to play through; Linux and macOS keep using an installed player.
+[target.'cfg(windows)'.dependencies]
+rodio = { version = "0.22.2", default-features = false, features = ["playback", "mp3", "wav"] }
+# Muting the other programs while speaking (Windows' volume mixer).
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_System_Com"] }

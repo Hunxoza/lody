@@ -1,0 +1,38 @@
+# Publishes site/ (the download page) to GitHub Pages: https://hunxoza.github.io/lody/
+# Once the repo is public: Settings → Pages → Source: "GitHub Actions", then Actions → Site →
+# Run workflow. After that it runs by itself when the page changes on main. The page reads the latest release from GitHub itself, so a
+# new release needs no new deploy.
+name: Site
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/site.yml"]
+  workflow_dispatch:
+
+# One deploy at a time; a newer one waits instead of cutting a deploy off halfway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    # Pages needs a public repo (on a free account): skipped, not failed, while it is private.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

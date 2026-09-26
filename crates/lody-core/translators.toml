@@ -1,0 +1,43 @@
+# The translators Lody offers, each with a short note shown when choosing. The one picked is
+# the one used; when it fails, the English is read.
+#
+# id       as `translator` in the settings stores it: google, google:extension, claude:<model>
+#          (any model the `claude` command takes)
+# speed    1 (slow) to 5 (fast): how soon the translation comes back, measured
+# quality  1 (stiff) to 5 (as a person would say it)
+# needs    what it needs besides the internet, if anything
+
+[[translator]]
+id = "google"
+name = "Google Translate"
+engine = "Google"
+best = true
+speed = 5
+quality = 3
+note = "Recommended. The fastest (under a second a reply). Good but sometimes stiff Thai, and it may translate names. After many requests in a short time Google refuses for a while (minutes to hours); switch to its second address meanwhile. Free, no account."
+
+[[translator]]
+id = "google:extension"
+name = "Google Translate, second address"
+engine = "Google"
+speed = 5
+quality = 3
+note = "The same translations from the address Google's Chrome extension uses. Its request limit is separate, so it works while the first one refuses. Free, no account."
+
+[[translator]]
+id = "claude:haiku"
+name = "Claude Haiku"
+engine = "Claude"
+speed = 2
+quality = 4
+needs = "Claude Code"
+note = "Natural Thai that keeps names of files and programs as they are. Takes 5 to 30 seconds, so replies start later. Uses your Claude Code sign-in and a little of your plan's usage; no key."
+
+[[translator]]
+id = "claude:sonnet"
+name = "Claude Sonnet"
+engine = "Claude"
+speed = 1
+quality = 5
+needs = "Claude Code"
+note = "The most natural Thai here, but slower than Haiku and uses more of your plan. Uses your Claude Code sign-in; no key."
