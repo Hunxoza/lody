@@ -80,4 +80,17 @@ cargo clippy --workspace --all-targets
 cargo test
 ```
 
+## How a change gets in
+
+1. Open a pull request from your fork against `main`; the template asks what it changes and
+   how you tested it. Something big? Open an issue first, so we agree on the shape.
+2. **Check** runs the commands above on Linux, Windows and macOS. On your first pull request
+   it waits until a maintainer lets it run.
+3. A maintainer reviews it. Anyone is welcome to review too, and it helps, but a merge needs
+   all three checks green and a maintainer's approval.
+4. It's squashed into one commit on `main`, titled after the pull request: keep the title to
+   one line that says what changes ("Read Codex CLI's session logs").
+
+Found a security problem? Report it privately instead (see [SECURITY.md](SECURITY.md)).
+
 Unless you say otherwise, what you contribute is licensed like Lody: MIT or Apache-2.0.

@@ -123,10 +123,15 @@ fn instance_id(control: &IAudioSessionControl2) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    /// Mutes the programs playing now for two seconds: run by hand with something playing.
+    /// Mutes the programs playing now for two seconds: run by hand with something playing,
+    /// `LODY_TEST_MUTE=1 cargo test -p lody-core mute -- --ignored`. Without the variable it
+    /// does nothing, so `cargo test -- --ignored` never silences anyone's music.
     #[test]
     #[ignore]
     fn mutes_and_unmutes_what_is_playing() {
+        if std::env::var_os("LODY_TEST_MUTE").is_none() {
+            return;
+        }
         super::others(true);
         let muted = super::MUTED.lock().unwrap().clone();
         println!("muted {} programs: {muted:#?}", muted.len());

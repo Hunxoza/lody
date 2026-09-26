@@ -1,0 +1,57 @@
+# Checks every pull request and every push to main: formatting, lint and tests, on Linux,
+# Windows and macOS (each has code of its own: muting is Windows only, the app menu Linux only).
+# A pull request can be merged once all three pass (the ruleset on main requires them).
+# From a first-time contributor's fork it waits until the owner approves the run.
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to the same pull request cancels the check still running on the old one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: check-linux
+            os: ubuntu-22.04
+          - name: check-windows
+            os: windows-latest
+          - name: check-macos
+            os: macos-latest
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace

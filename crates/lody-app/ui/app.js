@@ -89,7 +89,7 @@ function render() {
   $("config-path").textContent = state.config_path;
   $("player").textContent = state.player
     ? `Audio plays through ${state.player}.`
-    : "No audio player found: install mpv (sudo dnf install mpv) to hear replies.";
+    : "No audio player found: install mpv or ffmpeg to hear replies.";
   $("display").checked = s.display.enabled;
 }
 

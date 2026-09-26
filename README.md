@@ -87,19 +87,29 @@ installers.
 
 ### Run from source
 
-Needs Rust, `mpv` or `ffplay` for audio (Linux and macOS), and on Fedora the WebKitGTK build
-packages:
+Needs [Rust](https://rustup.rs), and for audio on Linux and macOS `mpv` or `ffplay`. Then, for
+your system:
 
 ```sh
+# Fedora
 sudo dnf install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel gtk3-devel
+# Ubuntu, Debian
+sudo apt install build-essential libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+# macOS
+xcode-select --install
+# Windows: the C++ build tools, as in "Build the installers" above
+```
+
+```sh
 cargo build --release -p lody-app
 ./target/release/lody-app            # opens the settings window; closing it keeps Lody running
 ./target/release/lody-app --hidden   # start in the background
 ```
 
-Run from source, **App → Show Lody in the app menu** adds it to GNOME's app list (installed
-packages are there already), and **Start Lody when I log in** starts it in the background. On GNOME the tray icon needs the
-AppIndicator extension; without it, open Lody again from the app menu.
+On Linux, run from source, **App → Show Lody in the app menu** adds it to GNOME's app list
+(installed packages are there already), and **Start Lody when I log in** starts it in the
+background. On GNOME the tray icon needs the AppIndicator extension; without it, open Lody
+again from the app menu.
 
 ## The command
 
@@ -120,8 +130,13 @@ is translated, so the translator isn't asked too often (Google refuses for a whi
 many requests). Code, tables, paths, URLs, commands and anything that looks like a secret stay
 on your computer: only prose is sent to the translator and Microsoft's Edge voices.
 
-Settings live in `~/.config/lody/config.toml`; every key is optional (see
-`crates/lody-core/src/settings.rs`).
+Settings live in `config.toml`, every key optional (see `crates/lody-core/src/settings.rs`):
+
+| System | Settings | Logs and state |
+|---|---|---|
+| Linux | `~/.config/lody/` | `~/.local/state/lody/` |
+| macOS | `~/Library/Application Support/lody/` | the same folder |
+| Windows | `%APPDATA%\lody\` | `%LOCALAPPDATA%\lody\` |
 
 ## Layout
 

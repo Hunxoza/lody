@@ -1,0 +1,33 @@
+name: Something went wrong
+description: Lody did something unexpected, or didn't read something it should have.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Lody version
+      placeholder: "0.1.8, or the commit if you built it"
+  - type: input
+    id: program
+    attributes:
+      label: Program Lody was reading
+      placeholder: Claude Code
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: From a debug build (`cargo run -p lody-app`, or a debug installer from Actions). Remove anything private first.
+      render: text
