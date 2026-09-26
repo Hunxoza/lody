@@ -32,6 +32,9 @@ struct Muted {
 
 /// Muted by this run while speaking.
 static MUTED: Mutex<Vec<Muted>> = Mutex::new(Vec::new());
+/// Sounds already muted when Lody muted the rest: muted by you, so never unmuted by Lody,
+/// even when another sound of the same program was Lody's.
+static YOURS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 /// Muted by an earlier run that stopped first, and not found since: a program has its sound
 /// only while it plays, and Windows brings it back muted when it plays again.
 static LEFT: Mutex<Vec<Muted>> = Mutex::new(Vec::new());
@@ -74,11 +77,15 @@ pub fn others(mute: bool) {
         return;
     }
     let result = if mute {
-        on_com_thread(mute_all).map(|found| *muted = found)
+        on_com_thread(mute_all).map(|(found, yours)| {
+            *muted = found;
+            *YOURS.lock().unwrap() = Some(yours);
+        })
     } else {
         let ids = ids(&muted);
+        let yours = YOURS.lock().unwrap().take().unwrap_or_default();
         muted.clear();
-        on_com_thread(move || unmute(&ids).map(|_| ()))
+        on_com_thread(move || unmute(&ids, &yours).map(|_| ()))
     };
     if let Err(e) = result {
         log::warn!("could not {} the other programs: {e}", if mute { "mute" } else { "unmute" });
@@ -103,7 +110,9 @@ pub fn recover() {
     std::thread::spawn(|| {
         loop {
             let wanted = ids(&LEFT.lock().unwrap());
-            match on_com_thread(move || unmute(&wanted)) {
+            // The first time one is seen again it is still the mute Lody left; after that it
+            // is off the list, so muting it yourself later is kept.
+            match on_com_thread(move || unmute(&wanted, &HashSet::new())) {
                 Ok(found) => LEFT
                     .lock()
                     .unwrap()
@@ -131,37 +140,53 @@ fn on_com_thread<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'stat
     .unwrap_or_else(|_| Err(windows::core::Error::empty()))
 }
 
-/// Mute each program playing through the default output. One Windows can't answer about
-/// (a sound just closing) is skipped: it never costs the list of those already muted, which
-/// would then stay muted with nothing to unmute them.
-fn mute_all() -> Result<Vec<Muted>> {
-    Ok(sessions()?.iter().filter_map(|(control, volume)| mute_one(control, volume)).collect())
+/// Mute each program playing through the default output; with the sounds that were muted
+/// already (yours). One Windows can't answer about (a sound just closing) is skipped: it never
+/// costs the list of those already muted, which would then stay muted with nothing to unmute them.
+fn mute_all() -> Result<(Vec<Muted>, HashSet<String>)> {
+    let (mut muted, mut yours) = (Vec::new(), HashSet::new());
+    for (control, volume) in sessions()? {
+        match mute_one(&control, &volume) {
+            Some(Ok(found)) => muted.push(found),
+            Some(Err(sound)) => {
+                yours.insert(sound);
+            }
+            None => {}
+        }
+    }
+    Ok((muted, yours))
 }
 
-fn mute_one(control: &IAudioSessionControl2, volume: &ISimpleAudioVolume) -> Option<Muted> {
+/// Mute one sound: `Ok` with what Lody muted, `Err` with the sound's id when it was muted
+/// already, `None` when it is Lody's own, the system's, or Windows can't answer.
+fn mute_one(
+    control: &IAudioSessionControl2,
+    volume: &ISimpleAudioVolume,
+) -> Option<std::result::Result<Muted, String>> {
     unsafe {
         let ours = control.GetProcessId().is_ok_and(|pid| pid == std::process::id());
-        if ours || control.IsSystemSoundsSession() == S_OK || volume.GetMute().ok()?.as_bool() {
+        if ours || control.IsSystemSoundsSession() == S_OK {
             return None;
         }
-        let found = Muted {
-            sound: text(control.GetSessionInstanceIdentifier().ok()?),
-            program: control.GetSessionIdentifier().map(text).unwrap_or_default(),
-        };
+        let sound = text(control.GetSessionInstanceIdentifier().ok()?);
+        if volume.GetMute().ok()?.as_bool() {
+            return Some(Err(sound));
+        }
+        let program = control.GetSessionIdentifier().map(text).unwrap_or_default();
         volume.SetMute(true, std::ptr::null()).ok()?;
-        Some(found)
+        Some(Ok(Muted { sound, program }))
     }
 }
 
-/// Unmute the sounds with one of `ids`: the same sound, or the same program since restarted.
-/// Each on its own, like muting. Returns the ids of those found, muted or not (someone may
-/// have unmuted them already): a program not playing now isn't among them.
-fn unmute(ids: &HashSet<String>) -> Result<HashSet<String>> {
+/// Unmute the sounds with one of `ids`: the same sound, or the same program since restarted,
+/// but never one of `yours`. Each on its own, like muting. Returns the ids of those found,
+/// muted or not (you may have unmuted them already): a program not playing now isn't among them.
+fn unmute(ids: &HashSet<String>, yours: &HashSet<String>) -> Result<HashSet<String>> {
     let mut found = HashSet::new();
     for (control, volume) in sessions()? {
         let sound = unsafe { control.GetSessionInstanceIdentifier() }.map(text).unwrap_or_default();
         let program = unsafe { control.GetSessionIdentifier() }.map(text).unwrap_or_default();
-        if !ids.contains(&sound) && !ids.contains(&program) {
+        if yours.contains(&sound) || (!ids.contains(&sound) && !ids.contains(&program)) {
             continue;
         }
         let muted = unsafe { volume.GetMute() }.is_ok_and(|m| m.as_bool());
@@ -250,5 +275,48 @@ mod tests {
         .unwrap();
         assert_eq!(still, 0, "programs left muted");
         assert!(!super::record().exists());
+    }
+
+    /// What you muted yourself stays muted when Lody gives the sound back. Run by hand like the
+    /// above; everything it mutes is unmuted at the end.
+    #[test]
+    #[ignore]
+    fn a_program_you_muted_stays_muted() {
+        if std::env::var_os("LODY_TEST_MUTE").is_none() {
+            return;
+        }
+        // You mute what's playing, before Lody speaks.
+        let yours = super::on_com_thread(|| {
+            let mut yours = Vec::new();
+            for (control, volume) in super::sessions()? {
+                if unsafe { control.IsSystemSoundsSession() } == super::S_OK {
+                    continue;
+                }
+                unsafe { volume.SetMute(true, std::ptr::null())? };
+                yours.push(super::text(unsafe { control.GetSessionInstanceIdentifier()? }));
+            }
+            Ok(yours)
+        })
+        .unwrap();
+        assert!(!yours.is_empty(), "play something first");
+
+        super::others(true);
+        super::others(false);
+        let still = super::on_com_thread({
+            let yours = yours.clone();
+            move || {
+                let mut still = 0;
+                for (control, volume) in super::sessions()? {
+                    let sound = super::text(unsafe { control.GetSessionInstanceIdentifier()? });
+                    if yours.contains(&sound) {
+                        still += unsafe { volume.GetMute()?.as_bool() } as usize;
+                        unsafe { volume.SetMute(false, std::ptr::null())? }; // yours back
+                    }
+                }
+                Ok(still)
+            }
+        })
+        .unwrap();
+        assert_eq!(still, yours.len(), "Lody unmuted what you had muted");
     }
 }
