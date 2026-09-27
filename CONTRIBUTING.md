@@ -42,6 +42,9 @@ pub trait Source: Send {
 - Start at the end: when Lody starts, report only what happens from then on, never the
   history. A session that begins later is read from its start.
 - Skip what you don't understand rather than failing: these formats change without notice.
+- Optional: `fn about(&self, session) -> About` says where a session runs ("terminal"), its
+  git branch and its title, when the program records them. Lody shows them with each reply
+  ("Claude Code · terminal · shop (main)"), so you can tell sessions apart.
 
 ### 3. List it
 

@@ -7,6 +7,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod desktop;
+mod overlay;
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,7 +15,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use lody_core::engine::Engine;
+use lody_core::engine::{Engine, Origin};
 use lody_core::handy::{self, Config as HandyConfig};
 use lody_core::locale::Locale;
 use lody_core::reply;
@@ -42,6 +43,7 @@ struct Lody {
     player: Option<String>,
     paused: AtomicBool,
     pause_item: Mutex<Option<CheckMenuItem<Wry>>>,
+    overlay_item: Mutex<Option<CheckMenuItem<Wry>>>,
     history: Arc<Mutex<VecDeque<Shown>>>,
 }
 
@@ -54,7 +56,8 @@ struct Shown {
     id: u64,
     /// Seconds since 1970.
     at: u64,
-    project: String,
+    /// The program, project and session it came from.
+    origin: Origin,
     original: String,
     /// The whole reply in your language; empty when only the spoken part was translated.
     display: String,
@@ -155,9 +158,10 @@ fn state(lody: State<Lody>) -> StateView {
 }
 
 #[tauri::command]
-fn save_settings(lody: State<Lody>, settings: Settings) -> Answer<()> {
+fn save_settings(app: AppHandle, lody: State<Lody>, settings: Settings) -> Answer<()> {
     let locale = Locale::load(&settings.locale, Some(&locales_folder())).map_err(fail)?;
     settings.save_to(&Settings::path()).map_err(fail)?;
+    show_overlay(&app, settings.display.overlay);
     lody.voices.configure(&settings.voices);
     lody.voices.set_fallback(Some(locale.backup_voice()));
     let old = lody.settings.lock().unwrap().clone();
@@ -211,6 +215,40 @@ fn read_again(lody: State<Lody>, id: u64) -> Answer<()> {
     lody.speaker.stop_all();
     lody.speaker.enqueue(Job { session: "again".into(), ..job });
     Ok(())
+}
+
+// --- The overlay: the latest reply on top of the other windows ---
+
+/// Turn the overlay on or off from the tray or its own close button: saved in the settings,
+/// and the settings window told.
+#[tauri::command]
+fn set_overlay(app: AppHandle, on: bool) -> Answer<()> {
+    let lody = app.state::<Lody>();
+    let settings = {
+        let mut settings = lody.settings.lock().unwrap();
+        settings.display.overlay = on;
+        settings.clone()
+    };
+    settings.save_to(&Settings::path()).map_err(fail)?;
+    show_overlay(&app, on);
+    let _ = app.emit("overlay", on);
+    Ok(())
+}
+
+/// Show or close the overlay, with the tray's tick to match.
+fn show_overlay(app: &AppHandle, on: bool) {
+    if let Err(e) = overlay::set(app, on) {
+        log::warn!("could not {} the overlay: {e}", if on { "show" } else { "close" });
+    }
+    if let Some(item) = app.state::<Lody>().overlay_item.lock().unwrap().as_ref() {
+        let _ = item.set_checked(on);
+    }
+}
+
+/// The reply the overlay shows when it opens: the latest one.
+#[tauri::command]
+fn latest_reply(lody: State<Lody>) -> Option<Shown> {
+    lody.history.lock().unwrap().front().cloned()
 }
 
 #[tauri::command]
@@ -376,10 +414,20 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Lody", true, None::<&str>)?;
     let paused = CheckMenuItem::with_id(app, "pause", "Pause reading", true, false, None::<&str>)?;
     let stop = MenuItem::with_id(app, "stop", "Stop reading this reply", true, None::<&str>)?;
+    let on_top = app.state::<Lody>().settings.lock().unwrap().display.overlay;
+    let overlay = CheckMenuItem::with_id(
+        app,
+        "overlay",
+        "Show translations on screen",
+        true,
+        on_top,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "Quit Lody", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&open, &paused, &stop, &separator, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &paused, &stop, &overlay, &separator, &quit])?;
     *app.state::<Lody>().pause_item.lock().unwrap() = Some(paused.clone());
+    *app.state::<Lody>().overlay_item.lock().unwrap() = Some(overlay.clone());
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
     TrayIconBuilder::with_id("lody")
         .icon(icon)
@@ -395,6 +443,12 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                     let _ = app.emit("paused", now);
                 }
                 "stop" => lody.speaker.stop_all(),
+                "overlay" => {
+                    let now = !lody.settings.lock().unwrap().display.overlay;
+                    if let Err(e) = set_overlay(app.clone(), now) {
+                        log::warn!("could not save the overlay setting: {e}");
+                    }
+                }
                 "quit" => app.exit(0),
                 _ => {}
             }
@@ -404,6 +458,13 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Wayland lets no program keep a window above the others, which the overlay needs: run
+    // under XWayland instead (falling back to Wayland without it). Set GDK_BACKEND to choose.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("GDK_BACKEND").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        // SAFETY: nothing else runs yet, so no thread reads the environment meanwhile.
+        unsafe { std::env::set_var("GDK_BACKEND", "x11,wayland") };
+    }
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("warn,lody_core=info,lody_app=info"),
     )
@@ -446,6 +507,7 @@ fn main() -> anyhow::Result<()> {
         player: player_name,
         paused: AtomicBool::new(false),
         pause_item: Mutex::new(None),
+        overlay_item: Mutex::new(None),
         history: history.clone(),
     };
 
@@ -458,6 +520,8 @@ fn main() -> anyhow::Result<()> {
             test_voice,
             stop_speaking,
             read_again,
+            set_overlay,
+            latest_reply,
             set_paused,
             set_in_menu,
             set_at_login,
@@ -481,7 +545,7 @@ fn main() -> anyhow::Result<()> {
                         at: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .map_or(0, |d| d.as_secs()),
-                        project: reply.project.clone(),
+                        origin: reply.origin.clone(),
                         original: reply.original.clone(),
                         display: reply.display.clone(),
                         spoken: reply.job.chunks.join(" "),
@@ -507,13 +571,21 @@ fn main() -> anyhow::Result<()> {
             if !hidden {
                 show_window(app.handle());
             }
+            if app.state::<Lody>().settings.lock().unwrap().display.overlay {
+                show_overlay(app.handle(), true);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the window keeps Lody reading in the background.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                if window.label() == "overlay" {
+                    // Closing the overlay (Alt+F4) turns it off, as its own button does.
+                    let _ = set_overlay(window.app_handle().clone(), false);
+                } else {
+                    // Closing the settings window keeps Lody reading in the background.
+                    let _ = window.hide();
+                }
             }
         })
         .build(tauri::generate_context!())?

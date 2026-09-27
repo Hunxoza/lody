@@ -30,7 +30,12 @@ Google Translate, its second address (the same translations, limited separately)
 Haiku or Sonnet through the `claude` command and your Claude Code sign-in (slower, more natural
 Thai). When it fails, Lody says so in your language and reads the English.
 
-The **Read** tab shows each reply translated in full.
+The **Read** tab shows each reply translated in full, with where it came from ("Claude Code ·
+terminal · shop (main)" and the session's title). **Show translations on screen** (there, or
+in the tray menu) opens a small window with the latest one, above your other windows: drag it
+anywhere, resize it from its corner, and it opens where you left it. On Linux under Wayland,
+which lets no program stay on top, Lody runs through XWayland for this (set `GDK_BACKEND` to
+choose otherwise).
 
 ### Install
 

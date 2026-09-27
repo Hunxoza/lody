@@ -9,7 +9,7 @@
 //! - A new prompt from you: `type: "user"` whose content is text, not a tool result.
 //! - Subagents (`isSidechain`) and Claude Code's own notes (`isMeta`) are ignored.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime};
 
 use serde_json::Value;
 
-use super::{Event, Source};
+use super::{About, Event, Source};
 
 /// How far a file's date may lag behind the clock Lody reads (see `poll`).
 const CLOCK_LEEWAY: Duration = Duration::from_secs(2);
@@ -32,7 +32,10 @@ pub fn default_root() -> PathBuf {
 }
 
 pub fn parse_line(line: &str) -> Option<Event> {
-    let entry: Value = serde_json::from_str(line).ok()?;
+    parse(&serde_json::from_str(line).ok()?)
+}
+
+fn parse(entry: &Value) -> Option<Event> {
     if entry["isSidechain"].as_bool() == Some(true) || entry["isMeta"].as_bool() == Some(true) {
         return None;
     }
@@ -87,17 +90,50 @@ struct Tail {
     partial: Vec<u8>,
 }
 
+/// What a line tells about its session: where Claude Code runs (`entrypoint`: "cli" in a
+/// terminal), the project's git branch, and the title Claude Code gives the conversation (an
+/// `ai-title` line).
+fn note(about: &mut HashMap<String, About>, entry: &Value) {
+    let Some(session) = entry["sessionId"].as_str() else { return };
+    let about = about.entry(session.to_string()).or_default();
+    if entry["type"] == "ai-title"
+        && let Some(title) = entry["aiTitle"].as_str()
+    {
+        about.title = title.to_string();
+    }
+    if let Some(entrypoint) = entry["entrypoint"].as_str() {
+        about.runs_in = match entrypoint {
+            "cli" => "terminal".to_string(),
+            e if e.contains("vscode") => "VS Code".to_string(),
+            e if e.contains("jetbrains") => "JetBrains".to_string(),
+            e => e.to_string(),
+        };
+    }
+    if let Some(branch) = entry["gitBranch"].as_str().filter(|b| !b.is_empty() && *b != "HEAD") {
+        about.branch = branch.to_string();
+    }
+}
+
 /// Follows every session log under the root: only what is written after `new` is read, plus
 /// sessions that start later.
 pub struct ClaudeCode {
     root: PathBuf,
     started: SystemTime,
     files: HashMap<PathBuf, Tail>,
+    about: HashMap<String, About>,
+    /// Sessions whose log was looked through for a title written before Lody started.
+    looked: HashSet<String>,
 }
 
 impl ClaudeCode {
     pub fn new(root: PathBuf) -> ClaudeCode {
-        let mut source = ClaudeCode { root, started: SystemTime::now(), files: HashMap::new() };
+        let mut source = ClaudeCode {
+            root,
+            started: SystemTime::now(),
+            files: HashMap::new(),
+            about: HashMap::new(),
+            looked: HashSet::new(),
+        };
         for (path, len, _) in source.logs() {
             source.files.insert(path, Tail { offset: len, partial: Vec::new() });
         }
@@ -120,9 +156,30 @@ impl ClaudeCode {
             })
             .collect()
     }
+
+    /// A session already open when Lody started named itself before then: find its latest
+    /// title once, when it first replies.
+    fn look_for_title(&mut self, path: &Path, session: &str) {
+        if !self.looked.insert(session.to_string())
+            || self.about.get(session).is_some_and(|a| !a.title.is_empty())
+        {
+            return;
+        }
+        let Ok(bytes) = std::fs::read(path) else { return };
+        let text = String::from_utf8_lossy(&bytes);
+        for line in text.lines().filter(|l| l.contains("\"ai-title\"")) {
+            if let Ok(entry) = serde_json::from_str::<Value>(line) {
+                note(&mut self.about, &entry);
+            }
+        }
+    }
 }
 
 impl Source for ClaudeCode {
+    fn about(&self, session: &str) -> About {
+        self.about.get(session).cloned().unwrap_or_default()
+    }
+
     fn poll(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
         for (path, len, modified) in self.logs() {
@@ -143,6 +200,7 @@ impl Source for ClaudeCode {
             if len == tail.offset {
                 continue;
             }
+            let mut lines = Vec::new();
             match read_from(&path, tail.offset) {
                 Ok(bytes) => {
                     tail.offset += bytes.len() as u64;
@@ -150,12 +208,20 @@ impl Source for ClaudeCode {
                     // Only whole lines: the last one may still be being written.
                     while let Some(end) = tail.partial.iter().position(|&b| b == b'\n') {
                         let line: Vec<u8> = tail.partial.drain(..=end).collect();
-                        if let Some(event) = parse_line(&String::from_utf8_lossy(&line)) {
-                            events.push(event);
-                        }
+                        lines.push(line);
                     }
                 }
                 Err(e) => log::debug!("can't read {}: {e}", path.display()),
+            }
+            for line in lines {
+                let Ok(entry) = serde_json::from_slice::<Value>(&line) else { continue };
+                note(&mut self.about, &entry);
+                if let Some(event) = parse(&entry) {
+                    if let Event::Reply { session, .. } = &event {
+                        self.look_for_title(&path, session);
+                    }
+                    events.push(event);
+                }
             }
         }
         events
@@ -243,6 +309,34 @@ mod tests {
         assert_eq!(parse_line(meta), None);
         assert_eq!(parse_line(r#"{"type":"mode","sessionId":"s1"}"#), None);
         assert_eq!(parse_line("not json"), None);
+    }
+
+    #[test]
+    fn says_where_a_session_runs_and_its_title_from_before_lody_started() {
+        let root = std::env::temp_dir().join(format!("lody-about-{}", std::process::id()));
+        let project = root.join("-home-a-shop");
+        std::fs::create_dir_all(&project).unwrap();
+        let log = project.join("s1.jsonl");
+        let title = r#"{"type":"ai-title","aiTitle":"Fix the checkout","sessionId":"s1"}"#;
+        std::fs::write(&log, format!("{title}\n")).unwrap();
+
+        let mut source = ClaudeCode::new(root.clone());
+        let mut line = entry("Fixed.");
+        line["entrypoint"] = "cli".into();
+        line["gitBranch"] = "fix/checkout".into();
+        let mut file = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
+        file.write_all(format!("{line}\n").as_bytes()).unwrap();
+        assert_eq!(source.poll().len(), 1);
+        assert_eq!(
+            source.about("s1"),
+            About {
+                runs_in: "terminal".into(),
+                branch: "fix/checkout".into(),
+                title: "Fix the checkout".into()
+            }
+        );
+        assert_eq!(source.about("other"), About::default());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
