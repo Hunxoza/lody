@@ -42,6 +42,9 @@ pub trait Source: Send {
 - Start at the end: when Lody starts, report only what happens from then on, never the
   history. A session that begins later is read from its start.
 - Skip what you don't understand rather than failing: these formats change without notice.
+- Optional: `fn about(&self, session) -> About` says where a session runs ("terminal"), its
+  git branch and its title, when the program records them. Lody shows them with each reply
+  ("Claude Code · terminal · shop (main)"), so you can tell sessions apart.
 
 ### 3. List it
 
@@ -105,7 +108,9 @@ Unless you say otherwise, what you contribute is licensed like Lody: MIT or Apac
 ## Releasing (maintainer)
 
 1. On `staging`, set the new version in `Cargo.toml` and `crates/lody-app/tauri.conf.json`.
-2. Open a pull request from `staging` into `main` titled "Release 0.2.0", and squash-merge it.
+2. Open a pull request from `staging` into `main` with the release template, titled
+   "Release 0.2.0" ([this link](https://github.com/Hunxoza/lody/compare/main...staging?expand=1&template=release.md)
+   fills both in; fix the number), go through its checklist, and squash-merge it.
    **Build** runs Check on all three systems, then publishes `v0.2.0` with the installers,
    and the website offers it at once. If Check fails, nothing is released: fix it on
    `staging` and merge again.

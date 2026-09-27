@@ -91,6 +91,8 @@ pub struct Display {
     /// Translate the whole reply for reading in the app, not only the part read aloud.
     pub enabled: bool,
     pub max_chars: usize,
+    /// Show each reply in your language in a small window that stays on top of the others.
+    pub overlay: bool,
 }
 
 /// Which programs are read, by their id in `sources::PROGRAMS` (`claude_code = false`); one
@@ -174,7 +176,7 @@ impl Default for Speech {
 
 impl Default for Display {
     fn default() -> Self {
-        Display { enabled: true, max_chars: 9000 }
+        Display { enabled: true, max_chars: 9000, overlay: false }
     }
 }
 
