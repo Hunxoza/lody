@@ -105,7 +105,9 @@ Unless you say otherwise, what you contribute is licensed like Lody: MIT or Apac
 ## Releasing (maintainer)
 
 1. On `staging`, set the new version in `Cargo.toml` and `crates/lody-app/tauri.conf.json`.
-2. Open a pull request from `staging` into `main` titled "Release 0.2.0", and squash-merge it.
+2. Open a pull request from `staging` into `main` with the release template, titled
+   "Release 0.2.0" ([this link](https://github.com/Hunxoza/lody/compare/main...staging?expand=1&template=release.md)
+   fills both in; fix the number), go through its checklist, and squash-merge it.
    **Build** runs Check on all three systems, then publishes `v0.2.0` with the installers,
    and the website offers it at once. If Check fails, nothing is released: fix it on
    `staging` and merge again.
